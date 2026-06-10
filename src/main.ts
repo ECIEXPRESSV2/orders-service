@@ -8,7 +8,15 @@ import * as path from 'path';
 
 const SERVICE_NAME = 'orders-service';
 const LOCK_FILE = path.join(os.tmpdir(), `${SERVICE_NAME}-swagger.lock`);
-const HOT_RELOAD_WINDOW_MS = 10_000;
+const SWAGGER_OPEN_TTL_MS = 5 * 60_000;
+
+function shouldAutoOpenSwagger(): boolean {
+  if (process.env.SWAGGER_AUTO_OPEN === 'false') {
+    return false;
+  }
+
+  return process.env.NODE_ENV === 'development' || process.env.SWAGGER_AUTO_OPEN === 'true';
+}
 
 function isBrowserRunning(): boolean {
   try {
@@ -43,7 +51,7 @@ function openSwaggerIfBrowserOpen(url: string): void {
       const { timestamp } = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf-8')) as {
         timestamp: number;
       };
-      if (Date.now() - timestamp < HOT_RELOAD_WINDOW_MS) {
+      if (Date.now() - timestamp < SWAGGER_OPEN_TTL_MS) {
         return;
       }
     } catch {
@@ -57,31 +65,14 @@ function openSwaggerIfBrowserOpen(url: string): void {
   openBrowser(url);
 }
 
-function cleanupLock(): void {
-  try {
-    fs.unlinkSync(LOCK_FILE);
-  } catch {
-    // ignore
-  }
-}
-
-process.on('SIGTERM', () => {
-  cleanupLock();
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  cleanupLock();
-  process.exit(0);
-});
-
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { cors: true });
 
   const config = new DocumentBuilder()
-    .setTitle('Orders Service')
-    .setDescription('Orders Service API documentation')
+    .setTitle('ECIXPRESS Order & Communication')
+    .setDescription('Orders, chat and operational tracking API for ECIXPRESS')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
@@ -90,6 +81,8 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
 
-  openSwaggerIfBrowserOpen(`http://localhost:${port}/api`);
+  if (shouldAutoOpenSwagger()) {
+    openSwaggerIfBrowserOpen(`http://localhost:${port}/api`);
+  }
 }
 bootstrap();
