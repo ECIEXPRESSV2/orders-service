@@ -9,6 +9,28 @@ import * as path from 'path';
 const SERVICE_NAME = 'orders-service';
 const LOCK_FILE = path.join(os.tmpdir(), `${SERVICE_NAME}-swagger.lock`);
 const SWAGGER_OPEN_TTL_MS = 5 * 60_000;
+const ENV_FILE = path.resolve(process.cwd(), '.env');
+
+function loadLocalEnv(): void {
+  if (!fs.existsSync(ENV_FILE)) return;
+
+  const lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+
+    const value = rawValue.trim().replace(/^(['"])(.*)\1$/, '$2');
+    process.env[key] = value;
+  }
+}
+
+loadLocalEnv();
 
 function shouldAutoOpenSwagger(): boolean {
   if (process.env.SWAGGER_AUTO_OPEN === 'false') {
@@ -79,10 +101,15 @@ async function bootstrap() {
   SwaggerModule.setup('api', app, document);
 
   const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+  const host = process.env.HOST;
+  if (host) {
+    await app.listen(port, host);
+  } else {
+    await app.listen(port);
+  }
 
   if (shouldAutoOpenSwagger()) {
-    openSwaggerIfBrowserOpen(`http://localhost:${port}/api`);
+    openSwaggerIfBrowserOpen(`http://${host ?? 'localhost'}:${port}/api`);
   }
 }
 bootstrap();
