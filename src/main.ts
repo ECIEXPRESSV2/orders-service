@@ -8,7 +8,37 @@ import * as path from 'path';
 
 const SERVICE_NAME = 'orders-service';
 const LOCK_FILE = path.join(os.tmpdir(), `${SERVICE_NAME}-swagger.lock`);
-const HOT_RELOAD_WINDOW_MS = 10_000;
+const SWAGGER_OPEN_TTL_MS = 5 * 60_000;
+const ENV_FILE = path.resolve(process.cwd(), '.env');
+
+function loadLocalEnv(): void {
+  if (!fs.existsSync(ENV_FILE)) return;
+
+  const lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+
+    const value = rawValue.trim().replace(/^(['"])(.*)\1$/, '$2');
+    process.env[key] = value;
+  }
+}
+
+loadLocalEnv();
+
+function shouldAutoOpenSwagger(): boolean {
+  if (process.env.SWAGGER_AUTO_OPEN === 'false') {
+    return false;
+  }
+
+  return process.env.NODE_ENV === 'development' || process.env.SWAGGER_AUTO_OPEN === 'true';
+}
 
 function isBrowserRunning(): boolean {
   try {
@@ -43,7 +73,7 @@ function openSwaggerIfBrowserOpen(url: string): void {
       const { timestamp } = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf-8')) as {
         timestamp: number;
       };
-      if (Date.now() - timestamp < HOT_RELOAD_WINDOW_MS) {
+      if (Date.now() - timestamp < SWAGGER_OPEN_TTL_MS) {
         return;
       }
     } catch {
@@ -57,39 +87,29 @@ function openSwaggerIfBrowserOpen(url: string): void {
   openBrowser(url);
 }
 
-function cleanupLock(): void {
-  try {
-    fs.unlinkSync(LOCK_FILE);
-  } catch {
-    // ignore
-  }
-}
-
-process.on('SIGTERM', () => {
-  cleanupLock();
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  cleanupLock();
-  process.exit(0);
-});
-
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { cors: true });
 
   const config = new DocumentBuilder()
-    .setTitle('Orders Service')
-    .setDescription('Orders Service API documentation')
+    .setTitle('ECIXPRESS Order & Communication')
+    .setDescription('Orders, chat and operational tracking API for ECIXPRESS')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
   const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+  const host = process.env.HOST;
+  if (host) {
+    await app.listen(port, host);
+  } else {
+    await app.listen(port);
+  }
 
-  openSwaggerIfBrowserOpen(`http://localhost:${port}/api`);
+  if (shouldAutoOpenSwagger()) {
+    openSwaggerIfBrowserOpen(`http://${host ?? 'localhost'}:${port}/api`);
+  }
 }
 bootstrap();

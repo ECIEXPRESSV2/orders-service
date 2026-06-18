@@ -9,7 +9,7 @@ export class AppController {
 
   @Get()
   @ApiOperation({ summary: 'Root endpoint' })
-  getHello(): string {
+  getHello(): { message: string; service: string; status: string } {
     return this.appService.getHello();
   }
 
