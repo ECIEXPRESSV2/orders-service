@@ -1,15 +1,39 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
-import { InMemoryCommunicationRepository } from '../infrastructure/in-memory-communication.repository';
+import { COMMUNICATION_REPOSITORY } from './ports/communication.repository';
+import type { CommunicationRepository } from './ports/communication.repository';
+import { EVENT_PUBLISHER } from './ports/event-publisher';
+import type { EventPublisher } from './ports/event-publisher';
+import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import { ConversationQueryDto, ConversationResponseDto, MarkMessageReadDto, MessageQueryDto, MessageResponseDto, SendMessageDto, TypingDto } from './communication.dto';
-import { createMessage, Conversation } from '../domain/communication.models';
+import { createConversation, createMessage, Conversation } from '../domain/communication.models';
 
 @Injectable()
 export class CommunicationService {
   constructor(
-    private readonly communicationRepository: InMemoryCommunicationRepository,
+    @Inject(COMMUNICATION_REPOSITORY) private readonly communicationRepository: CommunicationRepository,
+    @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
+
+  /**
+   * Crea (o devuelve) la conversación comprador-vendedor de un pedido. Se invoca
+   * al crear el pedido para que el chat (RF-09) exista desde el inicio.
+   */
+  async ensureConversationForOrder(params: {
+    orderId: string;
+    storeId: string;
+    customerId: string;
+    vendorId: string;
+  }): Promise<ConversationResponseDto> {
+    const existing = await this.communicationRepository.findConversationByOrderId(params.orderId);
+    if (existing) {
+      return this.toConversationResponse(existing);
+    }
+    const conversation = createConversation(params);
+    const saved = await this.communicationRepository.saveConversation(conversation);
+    return this.toConversationResponse(saved);
+  }
 
   async getConversations(query: ConversationQueryDto): Promise<ConversationResponseDto[]> {
     const conversations = await this.communicationRepository.listConversations(query);
@@ -36,6 +60,10 @@ export class CommunicationService {
   }
 
   async sendMessage(dto: SendMessageDto): Promise<MessageResponseDto> {
+    if (!dto.senderId) {
+      throw new BadRequestException('senderId is required');
+    }
+    const senderId = dto.senderId;
     const conversation = await this.communicationRepository.findConversationById(dto.conversationId);
     if (!conversation) {
       throw new NotFoundException(`Conversation ${dto.conversationId} not found`);
@@ -43,13 +71,13 @@ export class CommunicationService {
 
     const message = createMessage({
       conversationId: dto.conversationId,
-      senderId: dto.senderId,
+      senderId,
       senderRole: dto.senderRole,
       content: dto.content,
     });
 
     await this.communicationRepository.saveMessage(message);
-    await this.communicationRepository.incrementUnreadCounts(dto.conversationId, dto.senderId);
+    await this.communicationRepository.incrementUnreadCounts(dto.conversationId, senderId);
     await this.communicationRepository.saveConversation({
       ...conversation,
       lastMessageAt: message.createdAt,
@@ -65,10 +93,23 @@ export class CommunicationService {
       occurredAt: new Date().toISOString(),
     });
 
+    // Notifica al otro participante (notifications-service consume este evento).
+    const recipientId = senderId === conversation.customerId ? conversation.vendorId : conversation.customerId;
+    await this.events.publish(ORDER_EVENTS.CHAT_MESSAGE_SENT, {
+      messageId: message.id,
+      conversationId: message.conversationId,
+      senderId,
+      recipientId,
+      preview: message.content.slice(0, 120),
+    });
+
     return payload;
   }
 
   async markMessageAsRead(dto: MarkMessageReadDto): Promise<MessageResponseDto> {
+    if (!dto.participantId) {
+      throw new BadRequestException('participantId is required');
+    }
     const message = await this.communicationRepository.markMessageAsRead(dto.messageId, dto.participantId);
     if (!message) {
       throw new NotFoundException(`Message ${dto.messageId} not found`);
@@ -86,6 +127,9 @@ export class CommunicationService {
   }
 
   async setTyping(dto: TypingDto): Promise<void> {
+    if (!dto.userId) {
+      throw new BadRequestException('userId is required');
+    }
     await this.communicationRepository.setTyping(dto.conversationId, dto.userId, dto.typing);
     this.realtimeHub.publish({
       type: dto.typing ? 'typing:start' : 'typing:stop',

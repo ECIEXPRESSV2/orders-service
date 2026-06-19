@@ -14,14 +14,27 @@ export type OrderPaymentMethod = 'cash' | 'wallet' | 'card' | 'transfer';
 export type OrderDeliveryMethod = 'pickup' | 'delivery';
 export type OrderSource = 'web' | 'mobile' | 'admin';
 
+// Listas de valores permitidos, reutilizadas por los validadores de DTOs.
+export const ORDER_STATUS_VALUES: OrderStatus[] = [
+  'CREATED', 'PENDING_PAYMENT', 'PAYMENT_APPROVED', 'CONFIRMED',
+  'IN_PREPARATION', 'READY_FOR_PICKUP', 'DELIVERED', 'CANCELLED', 'FAILED',
+];
+export const ORDER_ACTOR_TYPES: OrderActorType[] = ['customer', 'vendor', 'system', 'payment', 'fulfillment'];
+export const ORDER_PAYMENT_METHODS: OrderPaymentMethod[] = ['cash', 'wallet', 'card', 'transfer'];
+export const ORDER_DELIVERY_METHODS: OrderDeliveryMethod[] = ['pickup', 'delivery'];
+export const ORDER_SOURCES: OrderSource[] = ['web', 'mobile', 'admin'];
+
 export interface OrderItem {
   id: string;
-  productId: number;
+  /** UUID del producto en products-service. */
+  productId: string;
   name: string;
   description?: string;
   imageUrl?: string;
+  /** Precio unitario en centavos COP (entero). */
   unitPrice: number;
   quantity: number;
+  /** unitPrice * quantity, en centavos COP. */
   totalAmount: number;
 }
 
@@ -49,8 +62,10 @@ export interface OrderRating {
 export interface Order {
   id: string;
   orderNumber: string;
+  /** UUID del comprador (userId de identity-service). */
   customerId: string;
-  storeId: number;
+  /** UUID de la tienda (storeId de identity-service). */
+  storeId: string;
   storeName: string;
   status: OrderStatus;
   paymentMethod: OrderPaymentMethod;
@@ -58,12 +73,15 @@ export interface Order {
   currency: string;
   source: OrderSource;
   notes?: string;
+  /** Montos en centavos COP (enteros). */
   subtotalAmount: number;
   discountAmount: number;
   totalAmount: number;
   items: OrderItem[];
   statusHistory: OrderStatusHistory[];
   rating?: OrderRating;
+  /** ISO-8601 UTC: hasta cuándo el pedido puede recogerse (se fija al pasar a READY_FOR_PICKUP). */
+  pickupExpiresAt?: string;
   createdAt: string;
   updatedAt: string;
   cancelledAt?: string;

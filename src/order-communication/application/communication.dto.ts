@@ -1,10 +1,24 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { PARTICIPANT_ROLES } from '../domain/communication.models';
 import type { MessageStatus, MessageType, ParticipantRole } from '../domain/communication.models';
 
 export class ConversationResponseDto {
   id!: string;
   orderId!: string;
-  storeId!: number;
+  storeId!: string;
   customerId!: string;
   vendorId!: string;
   status!: 'active' | 'archived' | 'closed';
@@ -42,62 +56,100 @@ export class MessageResponseDto {
 }
 
 export class SendMessageDto {
-  @ApiProperty({ example: 'conversation-1' })
+  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsUUID()
   conversationId!: string;
 
-  @ApiProperty({ example: 'student-001' })
-  senderId!: string;
+  @ApiPropertyOptional({ description: 'UUID del emisor. Se ignora si hay token: se toma del usuario autenticado.' })
+  @IsOptional()
+  @IsString()
+  senderId?: string;
 
-  @ApiProperty({ enum: ['customer', 'vendor', 'support', 'system'] })
+  @ApiProperty({ enum: PARTICIPANT_ROLES })
+  @IsIn(PARTICIPANT_ROLES)
   senderRole!: ParticipantRole;
 
   @ApiProperty({ example: 'Ya voy en camino' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
   content!: string;
 }
 
 export class MarkMessageReadDto {
-  @ApiProperty({ example: 'conversation-1' })
+  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsUUID()
   conversationId!: string;
 
-  @ApiProperty({ example: 'message-1' })
+  @ApiProperty({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901' })
+  @IsUUID()
   messageId!: string;
 
-  @ApiProperty({ example: 'student-001' })
-  participantId!: string;
+  @ApiPropertyOptional({ description: 'UUID del participante. Se ignora si hay token.' })
+  @IsOptional()
+  @IsString()
+  participantId?: string;
 }
 
 export class TypingDto {
-  @ApiProperty({ example: 'conversation-1' })
+  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsUUID()
   conversationId!: string;
 
-  @ApiProperty({ example: 'student-001' })
-  userId!: string;
+  @ApiPropertyOptional({ description: 'UUID del usuario. Se ignora si hay token.' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
 
-  @ApiProperty({ enum: ['customer', 'vendor', 'support', 'system'] })
+  @ApiProperty({ enum: PARTICIPANT_ROLES })
+  @IsIn(PARTICIPANT_ROLES)
   role!: ParticipantRole;
 
   @ApiProperty({ example: true })
+  @IsBoolean()
   typing!: boolean;
 }
 
 export class ConversationQueryDto {
-  @ApiPropertyOptional({ example: 'student-001' })
+  @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsOptional()
+  @IsString()
+  orderId?: string;
+
+  @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsOptional()
+  @IsString()
   customerId?: string;
 
-  @ApiPropertyOptional({ example: 'store-001' })
+  @ApiPropertyOptional({ example: 'c3d4e5f6-a7b8-9012-cdef-123456789012' })
+  @IsOptional()
+  @IsString()
   vendorId?: string;
 
-  @ApiPropertyOptional({ example: 1 })
-  storeId?: number;
+  @ApiPropertyOptional({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901' })
+  @IsOptional()
+  @IsString()
+  storeId?: string;
 }
 
 export class MessageQueryDto {
-  @ApiPropertyOptional({ example: 'conversation-1' })
+  @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @IsOptional()
+  @IsString()
   conversationId?: string;
 
   @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
   page?: number;
 
   @ApiPropertyOptional({ example: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
   pageSize?: number;
 }

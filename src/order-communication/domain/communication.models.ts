@@ -3,6 +3,8 @@ export type ParticipantRole = 'customer' | 'vendor' | 'support' | 'system';
 export type MessageStatus = 'sent' | 'delivered' | 'read' | 'deleted';
 export type MessageType = 'text' | 'system' | 'status-update';
 
+export const PARTICIPANT_ROLES: ParticipantRole[] = ['customer', 'vendor', 'support', 'system'];
+
 export interface Participant {
   conversationId: string;
   userId: string;
@@ -17,7 +19,8 @@ export interface Participant {
 export interface Conversation {
   id: string;
   orderId: string;
-  storeId: number;
+  /** UUID de la tienda (storeId de identity-service). */
+  storeId: string;
   customerId: string;
   vendorId: string;
   status: ConversationStatus;
@@ -60,7 +63,7 @@ export const createParticipant = (conversationId: string, userId: string, role: 
 
 export const createConversation = (params: {
   orderId: string;
-  storeId: number;
+  storeId: string;
   customerId: string;
   vendorId: string;
 }): Conversation => {
