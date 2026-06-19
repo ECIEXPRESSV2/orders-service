@@ -11,6 +11,11 @@ import { OrdersService } from './application/orders.service';
 import { CommunicationService } from './application/communication.service';
 import { ORDER_REPOSITORY } from './application/ports/order.repository';
 import { COMMUNICATION_REPOSITORY } from './application/ports/communication.repository';
+import { EVENT_PUBLISHER } from './application/ports/event-publisher';
+import { RabbitMQService } from './infrastructure/messaging/rabbitmq.service';
+import { OutboxService } from './infrastructure/messaging/outbox.service';
+import { OutboxWorker } from './infrastructure/messaging/outbox.worker';
+import { EventConsumerService } from './infrastructure/messaging/event-consumer.service';
 import { OrderEntity } from './infrastructure/persistence/order.entity';
 import { OrderItemEntity } from './infrastructure/persistence/order-item.entity';
 import { OrderStatusHistoryEntity } from './infrastructure/persistence/order-status-history.entity';
@@ -45,8 +50,12 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     CommunicationService,
     IdentityAuthClient,
     FirebaseAuthGuard,
+    RabbitMQService,
+    OutboxWorker,
+    EventConsumerService,
     { provide: ORDER_REPOSITORY, useClass: TypeOrmOrderRepository },
     { provide: COMMUNICATION_REPOSITORY, useClass: TypeOrmCommunicationRepository },
+    { provide: EVENT_PUBLISHER, useClass: OutboxService },
   ],
   exports: [OrdersService, CommunicationService, RealtimeHubService, IdentityAuthClient],
 })

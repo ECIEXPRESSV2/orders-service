@@ -2,6 +2,9 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { RealtimeHubService } from '../../common/realtime-hub.service';
 import { COMMUNICATION_REPOSITORY } from './ports/communication.repository';
 import type { CommunicationRepository } from './ports/communication.repository';
+import { EVENT_PUBLISHER } from './ports/event-publisher';
+import type { EventPublisher } from './ports/event-publisher';
+import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import { ConversationQueryDto, ConversationResponseDto, MarkMessageReadDto, MessageQueryDto, MessageResponseDto, SendMessageDto, TypingDto } from './communication.dto';
 import { createMessage, Conversation } from '../domain/communication.models';
 
@@ -9,6 +12,7 @@ import { createMessage, Conversation } from '../domain/communication.models';
 export class CommunicationService {
   constructor(
     @Inject(COMMUNICATION_REPOSITORY) private readonly communicationRepository: CommunicationRepository,
+    @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
 
@@ -68,6 +72,16 @@ export class CommunicationService {
       room: `conversation:${dto.conversationId}`,
       payload,
       occurredAt: new Date().toISOString(),
+    });
+
+    // Notifica al otro participante (notifications-service consume este evento).
+    const recipientId = senderId === conversation.customerId ? conversation.vendorId : conversation.customerId;
+    await this.events.publish(ORDER_EVENTS.CHAT_MESSAGE_SENT, {
+      messageId: message.id,
+      conversationId: message.conversationId,
+      senderId,
+      recipientId,
+      preview: message.content.slice(0, 120),
     });
 
     return payload;
