@@ -1,13 +1,14 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
-import { InMemoryOrderRepository } from '../infrastructure/in-memory-order.repository';
+import { ORDER_REPOSITORY } from './ports/order.repository';
+import type { OrderRepository } from './ports/order.repository';
 import { CreateOrderDto, CancelOrderDto, FrequentProductDto, OrderResponseDto, RateOrderDto, UpdateOrderStatusDto } from './orders.dto';
 import { attachRating, calculateAmounts, createHistoryEntry, Order, transitionOrder } from '../domain/order.models';
 
 @Injectable()
 export class OrdersService {
   constructor(
-    private readonly orderRepository: InMemoryOrderRepository,
+    @Inject(ORDER_REPOSITORY) private readonly orderRepository: OrderRepository,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
 
@@ -192,6 +193,7 @@ export class OrdersService {
       items: order.items,
       statusHistory: order.statusHistory,
       rating: order.rating,
+      pickupExpiresAt: order.pickupExpiresAt,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       cancelledAt: order.cancelledAt,

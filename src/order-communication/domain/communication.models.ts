@@ -17,7 +17,8 @@ export interface Participant {
 export interface Conversation {
   id: string;
   orderId: string;
-  storeId: number;
+  /** UUID de la tienda (storeId de identity-service). */
+  storeId: string;
   customerId: string;
   vendorId: string;
   status: ConversationStatus;
@@ -60,7 +61,7 @@ export const createParticipant = (conversationId: string, userId: string, role: 
 
 export const createConversation = (params: {
   orderId: string;
-  storeId: number;
+  storeId: string;
   customerId: string;
   vendorId: string;
 }): Conversation => {

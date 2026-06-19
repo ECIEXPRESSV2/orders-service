@@ -1,0 +1,32 @@
+# Infraestructura OPCIONAL para desarrollo offline.
+# En el entorno real, orders-service usa PostgreSQL en NeonDB y RabbitMQ en
+# CloudAMQP (ver .env). Este compose levanta equivalentes locales para poder
+# desarrollar sin conexión a la nube.
+#
+# Uso:
+#   docker compose up -d
+#   # y en .env apuntar:
+#   DATABASE_URL=postgresql://orders:orders@localhost:5432/orders
+#   RABBITMQ_URL=amqp://guest:guest@localhost:5672
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orders-postgres
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: orders
+    ports:
+      - '5432:5432'
+    volumes:
+      - orders_pgdata:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: orders-rabbitmq
+    ports:
+      - '5672:5672'   # AMQP
+      - '15672:15672' # Management UI (guest/guest)
+
+volumes:
+  orders_pgdata:

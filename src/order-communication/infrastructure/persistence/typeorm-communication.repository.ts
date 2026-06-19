@@ -1,0 +1,229 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import type {
+  Conversation,
+  Message,
+  Participant,
+  ParticipantRole,
+} from '../../domain/communication.models';
+import type { CommunicationRepository } from '../../application/ports/communication.repository';
+import { ConversationEntity } from './conversation.entity';
+import { ParticipantEntity } from './participant.entity';
+import { MessageEntity } from './message.entity';
+
+const iso = (date?: Date | null): string | undefined => (date ? date.toISOString() : undefined);
+
+@Injectable()
+export class TypeOrmCommunicationRepository implements CommunicationRepository {
+  constructor(
+    @InjectRepository(ConversationEntity)
+    private readonly conversations: Repository<ConversationEntity>,
+    @InjectRepository(MessageEntity)
+    private readonly messages: Repository<MessageEntity>,
+  ) {}
+
+  async findConversationById(id: string): Promise<Conversation | null> {
+    const entity = await this.conversations.findOne({ where: { id } });
+    return entity ? this.toConversation(entity) : null;
+  }
+
+  async findConversationByOrderId(orderId: string): Promise<Conversation | null> {
+    const entity = await this.conversations.findOne({ where: { orderId } });
+    return entity ? this.toConversation(entity) : null;
+  }
+
+  async listConversations(filters?: { customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]> {
+    const where: Record<string, unknown> = {};
+    if (filters?.customerId) where.customerId = filters.customerId;
+    if (filters?.vendorId) where.vendorId = filters.vendorId;
+    if (filters?.storeId) where.storeId = filters.storeId;
+    const entities = await this.conversations.find({ where, order: { updatedAt: 'DESC' } });
+    return entities.map((entity) => this.toConversation(entity));
+  }
+
+  async saveConversation(conversation: Conversation): Promise<Conversation> {
+    const entity = this.toConversationEntity(conversation);
+    await this.conversations.save(entity);
+    const reloaded = await this.conversations.findOne({ where: { id: conversation.id } });
+    return this.toConversation(reloaded ?? entity);
+  }
+
+  async getConversationMessages(conversationId: string): Promise<Message[]> {
+    const entities = await this.messages.find({ where: { conversationId }, order: { createdAt: 'ASC' } });
+    return entities.map((entity) => this.toMessage(entity));
+  }
+
+  async listMessages(query?: { conversationId?: string; page?: number; pageSize?: number }): Promise<{ items: Message[]; total: number }> {
+    const page = query?.page ?? 1;
+    const pageSize = query?.pageSize ?? 20;
+    const where = query?.conversationId ? { conversationId: query.conversationId } : {};
+    const [entities, total] = await this.messages.findAndCount({
+      where,
+      order: { createdAt: 'ASC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+    return { items: entities.map((entity) => this.toMessage(entity)), total };
+  }
+
+  async saveMessage(message: Message): Promise<Message> {
+    const entity = this.toMessageEntity(message);
+    await this.messages.save(entity);
+    return this.toMessage(entity);
+  }
+
+  async markMessageAsRead(messageId: string, participantId: string): Promise<Message | null> {
+    const entity = await this.messages.findOne({ where: { id: messageId } });
+    if (!entity) return null;
+
+    const readAt = new Date().toISOString();
+    if (!entity.readStatuses.some((status) => status.participantId === participantId)) {
+      entity.readStatuses = [...entity.readStatuses, { messageId, participantId, readAt }];
+    }
+    entity.status = 'read';
+    entity.updatedAt = new Date(readAt);
+    await this.messages.save(entity);
+    return this.toMessage(entity);
+  }
+
+  async setTyping(conversationId: string, userId: string, typing: boolean): Promise<void> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) return;
+    entity.participants = entity.participants.map((participant) =>
+      participant.userId === userId ? { ...participant, typing } : participant,
+    );
+    entity.updatedAt = new Date();
+    await this.conversations.save(entity);
+  }
+
+  async incrementUnreadCounts(conversationId: string, senderId: string): Promise<void> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) return;
+    entity.participants = entity.participants.map((participant) =>
+      participant.userId === senderId ? participant : { ...participant, unreadCount: participant.unreadCount + 1 },
+    );
+    entity.updatedAt = new Date();
+    await this.conversations.save(entity);
+  }
+
+  async joinConversation(conversationId: string, userId: string, role: ParticipantRole): Promise<Conversation> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) throw new Error(`Conversation ${conversationId} not found`);
+
+    if (!entity.participants.some((participant) => participant.userId === userId)) {
+      const participant = new ParticipantEntity();
+      participant.conversationId = conversationId;
+      participant.userId = userId;
+      participant.role = role;
+      participant.joinedAt = new Date();
+      participant.unreadCount = 0;
+      participant.typing = false;
+      entity.participants = [...entity.participants, participant];
+    }
+    entity.updatedAt = new Date();
+    await this.conversations.save(entity);
+    return this.toConversation(entity);
+  }
+
+  async leaveConversation(conversationId: string, userId: string): Promise<Conversation> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) throw new Error(`Conversation ${conversationId} not found`);
+    const leftAt = new Date();
+    entity.participants = entity.participants.map((participant) =>
+      participant.userId === userId ? { ...participant, leftAt, typing: false } : participant,
+    );
+    entity.updatedAt = leftAt;
+    await this.conversations.save(entity);
+    return this.toConversation(entity);
+  }
+
+  // ─── mappers ────────────────────────────────────────────────
+  private toConversationEntity(conversation: Conversation): ConversationEntity {
+    const entity = new ConversationEntity();
+    entity.id = conversation.id;
+    entity.orderId = conversation.orderId;
+    entity.storeId = conversation.storeId;
+    entity.customerId = conversation.customerId;
+    entity.vendorId = conversation.vendorId;
+    entity.status = conversation.status;
+    entity.lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
+    entity.lastMessagePreview = conversation.lastMessagePreview ?? null;
+    entity.createdAt = new Date(conversation.createdAt);
+    entity.updatedAt = new Date(conversation.updatedAt);
+    entity.deletedAt = conversation.deletedAt ? new Date(conversation.deletedAt) : null;
+    entity.participants = conversation.participants.map((participant) => this.toParticipantEntity(participant));
+    return entity;
+  }
+
+  private toParticipantEntity(participant: Participant): ParticipantEntity {
+    const entity = new ParticipantEntity();
+    entity.conversationId = participant.conversationId;
+    entity.userId = participant.userId;
+    entity.role = participant.role;
+    entity.joinedAt = new Date(participant.joinedAt);
+    entity.leftAt = participant.leftAt ? new Date(participant.leftAt) : null;
+    entity.lastReadAt = participant.lastReadAt ? new Date(participant.lastReadAt) : null;
+    entity.unreadCount = participant.unreadCount;
+    entity.typing = participant.typing;
+    return entity;
+  }
+
+  private toConversation(entity: ConversationEntity): Conversation {
+    return {
+      id: entity.id,
+      orderId: entity.orderId,
+      storeId: entity.storeId,
+      customerId: entity.customerId,
+      vendorId: entity.vendorId,
+      status: entity.status,
+      participants: (entity.participants ?? []).map((participant) => ({
+        conversationId: participant.conversationId,
+        userId: participant.userId,
+        role: participant.role,
+        joinedAt: participant.joinedAt.toISOString(),
+        leftAt: iso(participant.leftAt),
+        lastReadAt: iso(participant.lastReadAt),
+        unreadCount: participant.unreadCount,
+        typing: participant.typing,
+      })),
+      lastMessageAt: iso(entity.lastMessageAt),
+      lastMessagePreview: entity.lastMessagePreview ?? undefined,
+      createdAt: entity.createdAt.toISOString(),
+      updatedAt: entity.updatedAt.toISOString(),
+      deletedAt: iso(entity.deletedAt),
+    };
+  }
+
+  private toMessageEntity(message: Message): MessageEntity {
+    const entity = new MessageEntity();
+    entity.id = message.id;
+    entity.conversationId = message.conversationId;
+    entity.senderId = message.senderId;
+    entity.senderRole = message.senderRole;
+    entity.content = message.content;
+    entity.messageType = message.messageType;
+    entity.status = message.status;
+    entity.readStatuses = message.readStatuses;
+    entity.createdAt = new Date(message.createdAt);
+    entity.updatedAt = new Date(message.updatedAt);
+    entity.deletedAt = message.deletedAt ? new Date(message.deletedAt) : null;
+    return entity;
+  }
+
+  private toMessage(entity: MessageEntity): Message {
+    return {
+      id: entity.id,
+      conversationId: entity.conversationId,
+      senderId: entity.senderId,
+      senderRole: entity.senderRole,
+      content: entity.content,
+      messageType: entity.messageType,
+      status: entity.status,
+      readStatuses: entity.readStatuses ?? [],
+      createdAt: entity.createdAt.toISOString(),
+      updatedAt: entity.updatedAt.toISOString(),
+      deletedAt: iso(entity.deletedAt),
+    };
+  }
+}

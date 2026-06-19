@@ -4,7 +4,7 @@ import type { MessageStatus, MessageType, ParticipantRole } from '../domain/comm
 export class ConversationResponseDto {
   id!: string;
   orderId!: string;
-  storeId!: number;
+  storeId!: string;
   customerId!: string;
   vendorId!: string;
   status!: 'active' | 'archived' | 'closed';
@@ -81,14 +81,14 @@ export class TypingDto {
 }
 
 export class ConversationQueryDto {
-  @ApiPropertyOptional({ example: 'student-001' })
+  @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   customerId?: string;
 
-  @ApiPropertyOptional({ example: 'store-001' })
+  @ApiPropertyOptional({ example: 'c3d4e5f6-a7b8-9012-cdef-123456789012' })
   vendorId?: string;
 
-  @ApiPropertyOptional({ example: 1 })
-  storeId?: number;
+  @ApiPropertyOptional({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901' })
+  storeId?: string;
 }
 
 export class MessageQueryDto {

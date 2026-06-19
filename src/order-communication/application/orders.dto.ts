@@ -2,8 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { OrderDeliveryMethod, OrderPaymentMethod, OrderSource, OrderStatus } from '../domain/order.models';
 
 export class CreateOrderItemDto {
-  @ApiProperty({ example: 1 })
-  productId!: number;
+  @ApiProperty({ example: '6f3a2b1c-0d4e-4f5a-9b6c-7d8e9f0a1b2c', description: 'UUID del producto' })
+  productId!: string;
 
   @ApiProperty({ example: 'Combo Hamburguesa' })
   name!: string;
@@ -14,7 +14,7 @@ export class CreateOrderItemDto {
   @ApiPropertyOptional({ example: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=200&auto=format&fit=crop' })
   imageUrl?: string;
 
-  @ApiProperty({ example: 15000 })
+  @ApiProperty({ example: 1500000, description: 'Precio unitario en centavos COP' })
   unitPrice!: number;
 
   @ApiProperty({ example: 1 })
@@ -22,11 +22,11 @@ export class CreateOrderItemDto {
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ example: 'student-001' })
+  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890', description: 'UUID del comprador (se ignora si hay token; se toma del usuario autenticado)' })
   customerId!: string;
 
-  @ApiProperty({ example: 1 })
-  storeId!: number;
+  @ApiProperty({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', description: 'UUID de la tienda' })
+  storeId!: string;
 
   @ApiProperty({ example: 'Café Central' })
   storeName!: string;
@@ -93,7 +93,7 @@ export class OrderResponseDto {
   id!: string;
   orderNumber!: string;
   customerId!: string;
-  storeId!: number;
+  storeId!: string;
   storeName!: string;
   status!: OrderStatus;
   paymentMethod!: OrderPaymentMethod;
@@ -124,13 +124,14 @@ export class OrderResponseDto {
     createdAt: string;
     updatedAt: string;
   };
+  pickupExpiresAt?: string;
   createdAt!: string;
   updatedAt!: string;
   cancelledAt?: string;
 }
 
 export class FrequentProductDto {
-  productId!: number;
+  productId!: string;
   name!: string;
   imageUrl?: string;
   totalOrders!: number;

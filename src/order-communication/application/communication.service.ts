@@ -1,13 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
-import { InMemoryCommunicationRepository } from '../infrastructure/in-memory-communication.repository';
+import { COMMUNICATION_REPOSITORY } from './ports/communication.repository';
+import type { CommunicationRepository } from './ports/communication.repository';
 import { ConversationQueryDto, ConversationResponseDto, MarkMessageReadDto, MessageQueryDto, MessageResponseDto, SendMessageDto, TypingDto } from './communication.dto';
 import { createMessage, Conversation } from '../domain/communication.models';
 
 @Injectable()
 export class CommunicationService {
   constructor(
-    private readonly communicationRepository: InMemoryCommunicationRepository,
+    @Inject(COMMUNICATION_REPOSITORY) private readonly communicationRepository: CommunicationRepository,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
 
