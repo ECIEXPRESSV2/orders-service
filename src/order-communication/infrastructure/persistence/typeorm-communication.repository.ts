@@ -44,6 +44,19 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
   }
 
   async saveConversation(conversation: Conversation): Promise<Conversation> {
+    const existing = await this.conversations.findOne({ where: { id: conversation.id } });
+    if (existing) {
+      // Actualización: solo campos escalares. Los participantes se gestionan en
+      // join/leave/typing/unread para no re-insertarlos (viola el índice único).
+      existing.status = conversation.status;
+      existing.lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
+      existing.lastMessagePreview = conversation.lastMessagePreview ?? null;
+      existing.updatedAt = new Date(conversation.updatedAt);
+      existing.deletedAt = conversation.deletedAt ? new Date(conversation.deletedAt) : null;
+      await this.conversations.save(existing);
+      return this.toConversation(existing);
+    }
+    // Creación: inserta la conversación con sus participantes iniciales.
     const entity = this.toConversationEntity(conversation);
     await this.conversations.save(entity);
     const reloaded = await this.conversations.findOne({ where: { id: conversation.id } });
