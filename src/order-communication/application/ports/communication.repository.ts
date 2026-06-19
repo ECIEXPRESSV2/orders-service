@@ -6,7 +6,7 @@ import type { Conversation, Message, ParticipantRole } from '../../domain/commun
 export interface CommunicationRepository {
   findConversationById(id: string): Promise<Conversation | null>;
   findConversationByOrderId(orderId: string): Promise<Conversation | null>;
-  listConversations(filters?: { customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]>;
+  listConversations(filters?: { orderId?: string; customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]>;
   saveConversation(conversation: Conversation): Promise<Conversation>;
   getConversationMessages(conversationId: string): Promise<Message[]>;
   listMessages(query?: { conversationId?: string; page?: number; pageSize?: number }): Promise<{ items: Message[]; total: number }>;

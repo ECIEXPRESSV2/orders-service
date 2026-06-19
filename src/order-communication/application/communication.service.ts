@@ -6,7 +6,7 @@ import { EVENT_PUBLISHER } from './ports/event-publisher';
 import type { EventPublisher } from './ports/event-publisher';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import { ConversationQueryDto, ConversationResponseDto, MarkMessageReadDto, MessageQueryDto, MessageResponseDto, SendMessageDto, TypingDto } from './communication.dto';
-import { createMessage, Conversation } from '../domain/communication.models';
+import { createConversation, createMessage, Conversation } from '../domain/communication.models';
 
 @Injectable()
 export class CommunicationService {
@@ -15,6 +15,25 @@ export class CommunicationService {
     @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
+
+  /**
+   * Crea (o devuelve) la conversación comprador-vendedor de un pedido. Se invoca
+   * al crear el pedido para que el chat (RF-09) exista desde el inicio.
+   */
+  async ensureConversationForOrder(params: {
+    orderId: string;
+    storeId: string;
+    customerId: string;
+    vendorId: string;
+  }): Promise<ConversationResponseDto> {
+    const existing = await this.communicationRepository.findConversationByOrderId(params.orderId);
+    if (existing) {
+      return this.toConversationResponse(existing);
+    }
+    const conversation = createConversation(params);
+    const saved = await this.communicationRepository.saveConversation(conversation);
+    return this.toConversationResponse(saved);
+  }
 
   async getConversations(query: ConversationQueryDto): Promise<ConversationResponseDto[]> {
     const conversations = await this.communicationRepository.listConversations(query);

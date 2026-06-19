@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
+import { CommunicationService } from './communication.service';
 import { ORDER_REPOSITORY } from './ports/order.repository';
 import type { OrderRepository } from './ports/order.repository';
 import { EVENT_PUBLISHER } from './ports/event-publisher';
@@ -30,6 +31,7 @@ export class OrdersService {
     @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
     @Inject(IDENTITY_PORT) private readonly identity: IdentityPort,
     @Inject(PRODUCTS_PORT) private readonly products: ProductsPort,
+    private readonly communicationService: CommunicationService,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
 
@@ -88,6 +90,14 @@ export class OrdersService {
     };
 
     await this.orderRepository.save(order);
+    // Conversación comprador-vendedor del pedido (RF-09). vendorId se aproxima
+    // con storeId hasta que identity exponga el staff de la tienda.
+    await this.communicationService.ensureConversationForOrder({
+      orderId: order.id,
+      storeId: order.storeId,
+      customerId: order.customerId,
+      vendorId: order.storeId,
+    });
     // Evento de creación: financial retiene el pago, notifications avisa al comprador.
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,

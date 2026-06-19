@@ -25,6 +25,8 @@ class FakeEventPublisher implements EventPublisher {
 
 const identity: IdentityPort = { getStoreAvailability: async () => ({ available: true }) };
 const products: ProductsPort = { validateItems: async (_s, items) => items.map((i) => ({ ...i })) };
+// Doble mínimo de CommunicationService (solo se usa ensureConversationForOrder).
+const communication = { ensureConversationForOrder: async () => ({}) } as unknown as import('./communication.service').CommunicationService;
 
 const buildDto = (overrides: Partial<CreateOrderDto> = {}): CreateOrderDto => ({
   customerId: 'cust-1',
@@ -45,7 +47,7 @@ describe('OrdersService', () => {
   beforeEach(() => {
     repo = new FakeOrderRepository();
     events = new FakeEventPublisher();
-    service = new OrdersService(repo, events, identity, products, new RealtimeHubService());
+    service = new OrdersService(repo, events, identity, products, communication, new RealtimeHubService());
   });
 
   it('crea un pedido wallet en PENDING_PAYMENT y emite order.order.created', async () => {
@@ -67,7 +69,7 @@ describe('OrdersService', () => {
     const blocked = new OrdersService(
       repo, events,
       { getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }) },
-      products, new RealtimeHubService(),
+      products, communication, new RealtimeHubService(),
     );
     await expect(blocked.createOrder(buildDto())).rejects.toBeInstanceOf(ConflictException);
   });

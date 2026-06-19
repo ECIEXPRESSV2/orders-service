@@ -33,8 +33,9 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     return entity ? this.toConversation(entity) : null;
   }
 
-  async listConversations(filters?: { customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]> {
+  async listConversations(filters?: { orderId?: string; customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]> {
     const where: Record<string, unknown> = {};
+    if (filters?.orderId) where.orderId = filters.orderId;
     if (filters?.customerId) where.customerId = filters.customerId;
     if (filters?.vendorId) where.vendorId = filters.vendorId;
     if (filters?.storeId) where.storeId = filters.storeId;

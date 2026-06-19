@@ -71,6 +71,18 @@ export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnec
     return this.communicationService.joinConversation(body.conversationId, userId, body.role ?? 'customer');
   }
 
+  @SubscribeMessage('order:subscribe')
+  subscribeOrder(@MessageBody() body: { orderId: string }, @ConnectedSocket() socket: Socket) {
+    socket.join(`order:${body.orderId}`);
+    return { subscribed: body.orderId };
+  }
+
+  @SubscribeMessage('order:unsubscribe')
+  unsubscribeOrder(@MessageBody() body: { orderId: string }, @ConnectedSocket() socket: Socket) {
+    socket.leave(`order:${body.orderId}`);
+    return { unsubscribed: body.orderId };
+  }
+
   @SubscribeMessage('conversation:left')
   async leaveConversation(
     @MessageBody() body: { conversationId: string; userId?: string },
