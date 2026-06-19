@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RealtimeHubService } from '../common/realtime-hub.service';
+import { FirebaseAuthGuard } from '../common/auth/firebase-auth.guard';
+import { IdentityAuthClient } from '../common/auth/identity-auth.client';
 import { OrderCommunicationGateway } from './presentation/communication.gateway';
 import { OrdersController } from './presentation/orders.controller';
 import { ConversationsController } from './presentation/conversations.controller';
@@ -41,9 +43,11 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     OrderCommunicationGateway,
     OrdersService,
     CommunicationService,
+    IdentityAuthClient,
+    FirebaseAuthGuard,
     { provide: ORDER_REPOSITORY, useClass: TypeOrmOrderRepository },
     { provide: COMMUNICATION_REPOSITORY, useClass: TypeOrmCommunicationRepository },
   ],
-  exports: [OrdersService, CommunicationService, RealtimeHubService],
+  exports: [OrdersService, CommunicationService, RealtimeHubService, IdentityAuthClient],
 })
 export class OrderCommunicationModule {}

@@ -16,6 +16,10 @@ export class OrdersService {
     if (!dto.items.length) {
       throw new BadRequestException('At least one item is required');
     }
+    if (!dto.customerId) {
+      throw new BadRequestException('customerId is required');
+    }
+    const customerId = dto.customerId;
 
     const orderId = crypto.randomUUID();
     const resolvedItems = dto.items.map((item) => ({
@@ -35,7 +39,7 @@ export class OrdersService {
     let order: Order = {
       id: orderId,
       orderNumber: `OC-${createdAt.slice(0, 10).replaceAll('-', '')}-${Math.floor(Math.random() * 9000 + 1000)}`,
-      customerId: dto.customerId,
+      customerId,
       storeId: dto.storeId,
       storeName: dto.storeName,
       status: 'CREATED',
@@ -141,7 +145,7 @@ export class OrdersService {
     const ratedOrder = attachRating(order, {
       id: crypto.randomUUID(),
       orderId: order.id,
-      customerId: dto.customerId,
+      customerId: dto.customerId ?? order.customerId,
       score: dto.score,
       comment: dto.comment,
       createdAt: now,

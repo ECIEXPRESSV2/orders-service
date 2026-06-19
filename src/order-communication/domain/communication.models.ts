@@ -3,6 +3,8 @@ export type ParticipantRole = 'customer' | 'vendor' | 'support' | 'system';
 export type MessageStatus = 'sent' | 'delivered' | 'read' | 'deleted';
 export type MessageType = 'text' | 'system' | 'status-update';
 
+export const PARTICIPANT_ROLES: ParticipantRole[] = ['customer', 'vendor', 'support', 'system'];
+
 export interface Participant {
   conversationId: string;
   userId: string;

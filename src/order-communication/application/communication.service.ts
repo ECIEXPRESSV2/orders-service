@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
 import { COMMUNICATION_REPOSITORY } from './ports/communication.repository';
 import type { CommunicationRepository } from './ports/communication.repository';
@@ -37,6 +37,10 @@ export class CommunicationService {
   }
 
   async sendMessage(dto: SendMessageDto): Promise<MessageResponseDto> {
+    if (!dto.senderId) {
+      throw new BadRequestException('senderId is required');
+    }
+    const senderId = dto.senderId;
     const conversation = await this.communicationRepository.findConversationById(dto.conversationId);
     if (!conversation) {
       throw new NotFoundException(`Conversation ${dto.conversationId} not found`);
@@ -44,13 +48,13 @@ export class CommunicationService {
 
     const message = createMessage({
       conversationId: dto.conversationId,
-      senderId: dto.senderId,
+      senderId,
       senderRole: dto.senderRole,
       content: dto.content,
     });
 
     await this.communicationRepository.saveMessage(message);
-    await this.communicationRepository.incrementUnreadCounts(dto.conversationId, dto.senderId);
+    await this.communicationRepository.incrementUnreadCounts(dto.conversationId, senderId);
     await this.communicationRepository.saveConversation({
       ...conversation,
       lastMessageAt: message.createdAt,
@@ -70,6 +74,9 @@ export class CommunicationService {
   }
 
   async markMessageAsRead(dto: MarkMessageReadDto): Promise<MessageResponseDto> {
+    if (!dto.participantId) {
+      throw new BadRequestException('participantId is required');
+    }
     const message = await this.communicationRepository.markMessageAsRead(dto.messageId, dto.participantId);
     if (!message) {
       throw new NotFoundException(`Message ${dto.messageId} not found`);
@@ -87,6 +94,9 @@ export class CommunicationService {
   }
 
   async setTyping(dto: TypingDto): Promise<void> {
+    if (!dto.userId) {
+      throw new BadRequestException('userId is required');
+    }
     await this.communicationRepository.setTyping(dto.conversationId, dto.userId, dto.typing);
     this.realtimeHub.publish({
       type: dto.typing ? 'typing:start' : 'typing:stop',

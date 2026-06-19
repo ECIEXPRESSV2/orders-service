@@ -14,6 +14,16 @@ export type OrderPaymentMethod = 'cash' | 'wallet' | 'card' | 'transfer';
 export type OrderDeliveryMethod = 'pickup' | 'delivery';
 export type OrderSource = 'web' | 'mobile' | 'admin';
 
+// Listas de valores permitidos, reutilizadas por los validadores de DTOs.
+export const ORDER_STATUS_VALUES: OrderStatus[] = [
+  'CREATED', 'PENDING_PAYMENT', 'PAYMENT_APPROVED', 'CONFIRMED',
+  'IN_PREPARATION', 'READY_FOR_PICKUP', 'DELIVERED', 'CANCELLED', 'FAILED',
+];
+export const ORDER_ACTOR_TYPES: OrderActorType[] = ['customer', 'vendor', 'system', 'payment', 'fulfillment'];
+export const ORDER_PAYMENT_METHODS: OrderPaymentMethod[] = ['cash', 'wallet', 'card', 'transfer'];
+export const ORDER_DELIVERY_METHODS: OrderDeliveryMethod[] = ['pickup', 'delivery'];
+export const ORDER_SOURCES: OrderSource[] = ['web', 'mobile', 'admin'];
+
 export interface OrderItem {
   id: string;
   /** UUID del producto en products-service. */
