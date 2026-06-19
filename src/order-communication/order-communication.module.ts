@@ -12,6 +12,11 @@ import { CommunicationService } from './application/communication.service';
 import { ORDER_REPOSITORY } from './application/ports/order.repository';
 import { COMMUNICATION_REPOSITORY } from './application/ports/communication.repository';
 import { EVENT_PUBLISHER } from './application/ports/event-publisher';
+import { IDENTITY_PORT } from './application/ports/identity.port';
+import { PRODUCTS_PORT } from './application/ports/products.port';
+import { IdentityHttpClient } from './infrastructure/clients/identity-http.client';
+import { ProductsMockClient } from './infrastructure/clients/products.mock.client';
+import { ProductsHttpClient } from './infrastructure/clients/products-http.client';
 import { RabbitMQService } from './infrastructure/messaging/rabbitmq.service';
 import { OutboxService } from './infrastructure/messaging/outbox.service';
 import { OutboxWorker } from './infrastructure/messaging/outbox.worker';
@@ -56,6 +61,12 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     { provide: ORDER_REPOSITORY, useClass: TypeOrmOrderRepository },
     { provide: COMMUNICATION_REPOSITORY, useClass: TypeOrmCommunicationRepository },
     { provide: EVENT_PUBLISHER, useClass: OutboxService },
+    { provide: IDENTITY_PORT, useClass: IdentityHttpClient },
+    {
+      // products-service aún no expone productos -> mock por defecto.
+      provide: PRODUCTS_PORT,
+      useClass: process.env.USE_PRODUCTS_MOCK === 'false' ? ProductsHttpClient : ProductsMockClient,
+    },
   ],
   exports: [OrdersService, CommunicationService, RealtimeHubService, IdentityAuthClient],
 })

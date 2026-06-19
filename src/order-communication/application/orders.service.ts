@@ -4,6 +4,10 @@ import { ORDER_REPOSITORY } from './ports/order.repository';
 import type { OrderRepository } from './ports/order.repository';
 import { EVENT_PUBLISHER } from './ports/event-publisher';
 import type { EventPublisher } from './ports/event-publisher';
+import { IDENTITY_PORT } from './ports/identity.port';
+import type { IdentityPort } from './ports/identity.port';
+import { PRODUCTS_PORT } from './ports/products.port';
+import type { ProductsPort } from './ports/products.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import { CreateOrderDto, CancelOrderDto, FrequentProductDto, OrderResponseDto, RateOrderDto, UpdateOrderStatusDto } from './orders.dto';
 import {
@@ -24,6 +28,8 @@ export class OrdersService {
   constructor(
     @Inject(ORDER_REPOSITORY) private readonly orderRepository: OrderRepository,
     @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
+    @Inject(IDENTITY_PORT) private readonly identity: IdentityPort,
+    @Inject(PRODUCTS_PORT) private readonly products: ProductsPort,
     private readonly realtimeHub: RealtimeHubService,
   ) {}
 
@@ -36,8 +42,17 @@ export class OrdersService {
     }
     const customerId = dto.customerId;
 
+    // 1) La tienda debe poder aceptar pedidos (identity-service).
+    const availability = await this.identity.getStoreAvailability(dto.storeId);
+    if (!availability.available) {
+      throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
+    }
+
+    // 2) Validar productos/precios/stock (products-service; hoy mock).
+    const validatedItems = await this.products.validateItems(dto.storeId, dto.items);
+
     const orderId = crypto.randomUUID();
-    const resolvedItems = dto.items.map((item) => ({
+    const resolvedItems = validatedItems.map((item) => ({
       id: crypto.randomUUID(),
       productId: item.productId,
       name: item.name,
