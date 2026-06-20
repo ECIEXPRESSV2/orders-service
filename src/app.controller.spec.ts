@@ -15,8 +15,12 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return service metadata', () => {
+      expect(appController.getHello()).toEqual({
+        message: 'ECIXPRESS Order & Communication Service',
+        service: 'orders-service',
+        status: 'ok',
+      });
     });
   });
 });
