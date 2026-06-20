@@ -15,6 +15,12 @@ export const ORDER_EVENTS = {
   CANCELLED: 'order.order.cancelled',
   STATUS_CHANGED: 'order.order.status_changed',
   CHAT_MESSAGE_SENT: 'order.chat.message.sent',
+  // Carrito (orden DRAFT) y devoluciones: products-service los consume.
+  CART_CREATED: 'order.cart.created',
+  CART_ITEM_CHANGED: 'order.cart.item_changed',
+  RETURN_REQUESTED: 'order.return.requested',
+  // orders autoriza el reembolso con el monto que cotizó products; financial lo ejecuta.
+  RETURN_CONFIRMED: 'order.return.confirmed',
 } as const;
 
 // ─── Routing keys que CONSUME orders-service ────────────────────
@@ -24,6 +30,9 @@ export const CONSUMED_EVENTS = {
   QR_EXPIRED: 'fulfillment.qr.expired',
   PAYMENT_PROCESSED: 'financial.payment.processed',
   PAYMENT_FAILED: 'financial.payment.failed',
+  // products-service responde con la cotización del carrito y de la devolución.
+  CART_PRICED: 'products.cart.priced',
+  RETURN_PRICED: 'products.return.priced',
 } as const;
 
 export const CONSUMED_ROUTING_KEYS: string[] = Object.values(CONSUMED_EVENTS);
@@ -70,4 +79,33 @@ export interface IncomingEventEnvelope {
   orderId?: string;
   reason?: string;
   [key: string]: unknown;
+}
+
+/** Payload de `products.cart.priced`: cotización autoritativa del carrito. */
+export interface IncomingCartPricedLine {
+  productId: string;
+  name: string;
+  imageUrl?: string;
+  unitPrice: number; // centavos COP
+  quantity: number;
+  totalAmount: number; // centavos COP
+}
+
+export interface IncomingCartPricedEvent {
+  cartId: string;
+  storeId: string;
+  currency?: string;
+  lines: IncomingCartPricedLine[];
+  subtotalAmount: number;
+  discountAmount: number;
+  finalAmount: number;
+}
+
+/** Payload de `products.return.priced`: monto a devolver ya calculado. */
+export interface IncomingReturnPricedEvent {
+  orderId: string;
+  storeId: string;
+  full: boolean;
+  refundAmount: number; // centavos COP
+  lines: Array<{ productId: string; quantity: number; amount: number }>;
 }
