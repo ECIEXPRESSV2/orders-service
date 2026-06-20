@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Order } from '../../domain/order.models';
+import type { Order, OrderItem } from '../../domain/order.models';
 import type { FrequentProduct, OrderRepository } from '../../application/ports/order.repository';
 import { OrderEntity } from './order.entity';
 import { OrderItemEntity } from './order-item.entity';
@@ -23,6 +23,43 @@ export class TypeOrmOrderRepository implements OrderRepository {
     // Recargamos para garantizar relaciones eager consistentes.
     const reloaded = await this.orders.findOne({ where: { id: saved.id } });
     return this.toDomain(reloaded ?? saved);
+  }
+
+  async replaceItems(
+    orderId: string,
+    items: OrderItem[],
+    amounts: { subtotalAmount: number; discountAmount: number; totalAmount: number },
+  ): Promise<Order> {
+    await this.orders.manager.transaction(async (manager) => {
+      await manager.delete(OrderItemEntity, { orderId });
+      if (items.length > 0) {
+        await manager.insert(
+          OrderItemEntity,
+          items.map((item) => ({
+            id: item.id,
+            orderId,
+            productId: item.productId,
+            name: item.name,
+            description: item.description ?? null,
+            imageUrl: item.imageUrl ?? null,
+            unitPrice: item.unitPrice,
+            quantity: item.quantity,
+            totalAmount: item.totalAmount,
+          })),
+        );
+      }
+      await manager.update(
+        OrderEntity,
+        { id: orderId },
+        {
+          subtotalAmount: amounts.subtotalAmount,
+          discountAmount: amounts.discountAmount,
+          totalAmount: amounts.totalAmount,
+        },
+      );
+    });
+    const reloaded = await this.orders.findOne({ where: { id: orderId } });
+    return this.toDomain(reloaded!);
   }
 
   async findById(id: string): Promise<Order | null> {

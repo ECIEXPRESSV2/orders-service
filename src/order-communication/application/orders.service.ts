@@ -10,7 +10,18 @@ import type { IdentityPort } from './ports/identity.port';
 import { PRODUCTS_PORT } from './ports/products.port';
 import type { ProductsPort } from './ports/products.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
-import { CreateOrderDto, CancelOrderDto, FrequentProductDto, OrderResponseDto, RateOrderDto, UpdateOrderStatusDto } from './orders.dto';
+import type { IncomingCartPricedEvent, IncomingReturnPricedEvent } from '../infrastructure/messaging/event-contracts';
+import {
+  CreateOrderDto,
+  CreateDraftDto,
+  UpsertCartItemDto,
+  RequestReturnDto,
+  CancelOrderDto,
+  FrequentProductDto,
+  OrderResponseDto,
+  RateOrderDto,
+  UpdateOrderStatusDto,
+} from './orders.dto';
 import {
   attachRating,
   calculateAmounts,
@@ -18,9 +29,15 @@ import {
   createHistoryEntry,
   Order,
   OrderActorType,
+  OrderItem,
   OrderStatus,
   transitionOrder,
 } from '../domain/order.models';
+
+/** Estados desde los que un pedido admite solicitar una devolución. */
+const RETURNABLE_STATUSES: OrderStatus[] = [
+  'CONFIRMED', 'READY_FOR_PICKUP', 'DELIVERED', 'PARTIALLY_RETURNED',
+];
 
 const PICKUP_WINDOW_MS = Number(process.env.PICKUP_WINDOW_HOURS ?? 2) * 3_600_000;
 
@@ -119,6 +136,214 @@ export class OrdersService {
     await this.finalize(previous, order);
 
     return this.toResponse(order);
+  }
+
+  // ─── Carrito (orden DRAFT) ───────────────────────────────────────
+  // El carrito vive aquí como una orden en estado DRAFT. orders NUNCA calcula
+  // precios: solo guarda líneas (productId, quantity) y emite eventos; el precio
+  // autoritativo y las promociones los resuelve products-service y vuelven por
+  // `products.cart.priced`.
+
+  /** Crea un carrito vacío para una tienda y avisa a products-service. */
+  async createDraft(dto: CreateDraftDto): Promise<OrderResponseDto> {
+    if (!dto.customerId) {
+      throw new BadRequestException('customerId is required');
+    }
+    const availability = await this.identity.getStoreAvailability(dto.storeId);
+    if (!availability.available) {
+      throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
+    }
+
+    const orderId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const currency = dto.currency ?? 'COP';
+    const order: Order = {
+      id: orderId,
+      orderNumber: `OC-${createdAt.slice(0, 10).replaceAll('-', '')}-${Math.floor(Math.random() * 9000 + 1000)}`,
+      customerId: dto.customerId,
+      storeId: dto.storeId,
+      storeName: dto.storeName,
+      status: 'DRAFT',
+      paymentMethod: dto.paymentMethod,
+      deliveryMethod: dto.deliveryMethod,
+      currency,
+      source: dto.source ?? 'web',
+      notes: dto.notes,
+      subtotalAmount: 0,
+      discountAmount: 0,
+      totalAmount: 0,
+      items: [],
+      statusHistory: [createHistoryEntry({ orderId, fromStatus: null, toStatus: 'DRAFT', actorType: 'customer', actorId: dto.customerId })],
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    await this.orderRepository.save(order);
+    await this.events.publish(ORDER_EVENTS.CART_CREATED, {
+      cartId: order.id,
+      buyerId: order.customerId,
+      storeId: order.storeId,
+      currency,
+    });
+    this.broadcast(order);
+    return this.toResponse(order);
+  }
+
+  /** Añade, actualiza (cantidad) o elimina (cantidad 0) una línea del carrito. */
+  async setCartItem(id: string, dto: UpsertCartItemDto): Promise<OrderResponseDto> {
+    const order = await this.requireOrder(id);
+    if (order.status !== 'DRAFT') {
+      throw new ConflictException('Solo se puede modificar un carrito en estado DRAFT');
+    }
+
+    const items = [...order.items];
+    const index = items.findIndex((item) => item.productId === dto.productId);
+    if (dto.quantity <= 0) {
+      if (index >= 0) items.splice(index, 1);
+    } else if (index >= 0) {
+      items[index] = {
+        ...items[index],
+        quantity: dto.quantity,
+        name: dto.name ?? items[index].name,
+        imageUrl: dto.imageUrl ?? items[index].imageUrl,
+      };
+    } else {
+      items.push({
+        id: crypto.randomUUID(),
+        productId: dto.productId,
+        name: dto.name ?? 'Producto',
+        imageUrl: dto.imageUrl,
+        unitPrice: 0, // se completa cuando products cotiza el carrito
+        quantity: dto.quantity,
+        totalAmount: 0,
+      });
+    }
+
+    // Los montos se mantienen hasta que llegue products.cart.priced.
+    const updated = await this.orderRepository.replaceItems(order.id, items, {
+      subtotalAmount: order.subtotalAmount,
+      discountAmount: order.discountAmount,
+      totalAmount: order.totalAmount,
+    });
+    await this.events.publish(ORDER_EVENTS.CART_ITEM_CHANGED, {
+      cartId: order.id,
+      storeId: order.storeId,
+      currency: order.currency,
+      items: updated.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+    });
+    this.broadcast(updated);
+    return this.toResponse(updated);
+  }
+
+  /** Aplica la cotización autoritativa de products-service al carrito DRAFT. */
+  async applyCartPriced(event: IncomingCartPricedEvent): Promise<void> {
+    const order = await this.orderRepository.findById(event.cartId);
+    if (!order || order.status !== 'DRAFT') return;
+
+    const items: OrderItem[] = event.lines.map((line) => {
+      const existing = order.items.find((item) => item.productId === line.productId);
+      return {
+        id: existing?.id ?? crypto.randomUUID(),
+        productId: line.productId,
+        name: line.name,
+        imageUrl: line.imageUrl,
+        unitPrice: line.unitPrice,
+        quantity: line.quantity,
+        totalAmount: line.totalAmount,
+      };
+    });
+
+    const updated = await this.orderRepository.replaceItems(order.id, items, {
+      subtotalAmount: event.subtotalAmount,
+      discountAmount: event.discountAmount,
+      totalAmount: event.finalAmount,
+    });
+    this.broadcast(updated);
+  }
+
+  /** Confirma el carrito: lo pasa a pago y dispara el cobro en financial. */
+  async checkout(id: string): Promise<OrderResponseDto> {
+    let order = await this.requireOrder(id);
+    if (order.status !== 'DRAFT') {
+      throw new ConflictException('El pedido no es un carrito en estado DRAFT');
+    }
+    if (order.items.length === 0) {
+      throw new BadRequestException('El carrito está vacío');
+    }
+    if (order.totalAmount <= 0) {
+      throw new ConflictException('El carrito aún no ha sido cotizado por products-service');
+    }
+
+    await this.events.publish(ORDER_EVENTS.CREATED, {
+      orderId: order.id,
+      buyerId: order.customerId,
+      storeId: order.storeId,
+      totalAmount: order.totalAmount,
+      paymentMethod: order.paymentMethod,
+    });
+
+    const previous = order.status;
+    if (order.paymentMethod === 'cash') {
+      order = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Cash order confirmed by store');
+    } else {
+      order = this.transitionTo(order, 'PENDING_PAYMENT', 'payment', 'Awaiting payment approval');
+    }
+    await this.finalize(previous, order);
+    return this.toResponse(order);
+  }
+
+  // ─── Devoluciones ────────────────────────────────────────────────
+
+  /** Solicita una devolución (total o parcial). products calcula el monto. */
+  async requestReturn(id: string, dto: RequestReturnDto): Promise<OrderResponseDto> {
+    const order = await this.requireOrder(id);
+    if (!RETURNABLE_STATUSES.includes(order.status)) {
+      throw new ConflictException(`La orden en estado ${order.status} no admite devoluciones`);
+    }
+    const full = dto.full ?? !dto.items?.length;
+    if (!full && !dto.items?.length) {
+      throw new BadRequestException('Indica los productos a devolver o solicita una devolución total');
+    }
+
+    await this.events.publish(ORDER_EVENTS.RETURN_REQUESTED, {
+      orderId: order.id,
+      storeId: order.storeId,
+      full,
+      items: full ? undefined : dto.items?.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      reason: dto.reason,
+    });
+    // El estado se actualiza al llegar products.return.priced.
+    return this.toResponse(order);
+  }
+
+  /**
+   * Aplica la devolución cotizada por products: marca la orden devuelta y, como
+   * dueña del pedido, AUTORIZA el reembolso emitiendo `order.return.confirmed` para
+   * que financial acredite la billetera. orders no calcula el monto: solo reenvía el
+   * que cotizó products.
+   */
+  async applyReturnPriced(event: IncomingReturnPricedEvent): Promise<void> {
+    const order = await this.orderRepository.findById(event.orderId);
+    if (!order) return;
+    if (event.refundAmount <= 0) return;
+    const toStatus: OrderStatus = event.full ? 'RETURNED' : 'PARTIALLY_RETURNED';
+    if (!canTransitionOrder(order.status, toStatus)) return;
+
+    const updated = this.transitionTo(
+      order,
+      toStatus,
+      'system',
+      `Devolución por ${event.refundAmount} centavos`,
+    );
+    await this.finalize(order.status, updated);
+
+    await this.events.publish(ORDER_EVENTS.RETURN_CONFIRMED, {
+      orderId: order.id,
+      buyerId: order.customerId,
+      storeId: order.storeId,
+      full: event.full,
+      refundAmount: event.refundAmount,
+    });
   }
 
   async getOrders(query?: { customerId?: string; status?: string }): Promise<OrderResponseDto[]> {
