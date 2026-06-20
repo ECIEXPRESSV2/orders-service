@@ -109,6 +109,98 @@ export class CreateOrderDto {
   discountAmount?: number;
 }
 
+export class CreateDraftDto {
+  @ApiPropertyOptional({ description: 'UUID del comprador. Se ignora si hay token: se toma del usuario autenticado.' })
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
+  @ApiProperty({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', description: 'UUID de la tienda' })
+  @IsUUID()
+  storeId!: string;
+
+  @ApiProperty({ example: 'Café Central' })
+  @IsString()
+  @IsNotEmpty()
+  storeName!: string;
+
+  @ApiProperty({ example: 'wallet', enum: ORDER_PAYMENT_METHODS })
+  @IsIn(ORDER_PAYMENT_METHODS)
+  paymentMethod!: OrderPaymentMethod;
+
+  @ApiProperty({ example: 'pickup', enum: ORDER_DELIVERY_METHODS })
+  @IsIn(ORDER_DELIVERY_METHODS)
+  deliveryMethod!: OrderDeliveryMethod;
+
+  @ApiPropertyOptional({ example: 'COP' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  currency?: string;
+
+  @ApiPropertyOptional({ example: 'web', enum: ORDER_SOURCES })
+  @IsOptional()
+  @IsIn(ORDER_SOURCES)
+  source?: OrderSource;
+
+  @ApiPropertyOptional({ example: 'Sin mayonesa' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
+}
+
+export class UpsertCartItemDto {
+  @ApiProperty({ example: '6f3a2b1c-0d4e-4f5a-9b6c-7d8e9f0a1b2c', description: 'UUID del producto' })
+  @IsUUID()
+  productId!: string;
+
+  @ApiProperty({ example: 2, description: 'Cantidad deseada. 0 elimina la línea del carrito.' })
+  @IsInt()
+  @Min(0)
+  quantity!: number;
+
+  @ApiPropertyOptional({ example: 'Combo Hamburguesa', description: 'Nombre para mostrar mientras products cotiza.' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'https://images.example.com/combo.jpg' })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+}
+
+export class ReturnItemDto {
+  @ApiProperty({ example: '6f3a2b1c-0d4e-4f5a-9b6c-7d8e9f0a1b2c', description: 'UUID del producto a devolver' })
+  @IsUUID()
+  productId!: string;
+
+  @ApiProperty({ example: 1, description: 'Cantidad a devolver' })
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+}
+
+export class RequestReturnDto {
+  @ApiPropertyOptional({ example: false, description: 'true = devolución total; ignora `items`.' })
+  @IsOptional()
+  full?: boolean;
+
+  @ApiPropertyOptional({ type: [ReturnItemDto], description: 'Productos y cantidades a devolver (devolución parcial).' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReturnItemDto)
+  items?: ReturnItemDto[];
+
+  @ApiPropertyOptional({ example: 'Producto en mal estado' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class UpdateOrderStatusDto {
   @ApiProperty({ enum: ORDER_STATUS_VALUES })
   @IsIn(ORDER_STATUS_VALUES)

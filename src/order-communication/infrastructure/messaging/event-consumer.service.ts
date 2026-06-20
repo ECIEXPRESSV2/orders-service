@@ -4,7 +4,13 @@ import { Repository } from 'typeorm';
 import { OrdersService } from '../../application/orders.service';
 import { ProcessedEventEntity } from '../persistence/processed-event.entity';
 import { RabbitMQService } from './rabbitmq.service';
-import { CONSUMED_EVENTS, CONSUMED_ROUTING_KEYS, IncomingEventEnvelope } from './event-contracts';
+import {
+  CONSUMED_EVENTS,
+  CONSUMED_ROUTING_KEYS,
+  IncomingEventEnvelope,
+  type IncomingCartPricedEvent,
+  type IncomingReturnPricedEvent,
+} from './event-contracts';
 
 /**
  * Consume eventos de fulfillment y financial desde RabbitMQ y los traduce a
@@ -33,6 +39,20 @@ export class EventConsumerService implements OnModuleInit {
   }
 
   private async handle(routingKey: string, event: IncomingEventEnvelope): Promise<void> {
+    // Eventos de products: se aplican SIEMPRE (la cotización es un reemplazo
+    // completo e idempotente) y no usan el orderId/idempotencyKey del envelope de
+    // orders, así que se procesan antes del guard y la deduplicación.
+    if (routingKey === CONSUMED_EVENTS.CART_PRICED) {
+      await this.ordersService.applyCartPriced(event as unknown as IncomingCartPricedEvent);
+      this.logger.log(`Carrito cotizado aplicado: cart ${(event as { cartId?: string }).cartId}`);
+      return;
+    }
+    if (routingKey === CONSUMED_EVENTS.RETURN_PRICED) {
+      await this.ordersService.applyReturnPriced(event as unknown as IncomingReturnPricedEvent);
+      this.logger.log(`Devolución aplicada: order ${event.orderId}`);
+      return;
+    }
+
     const orderId = event.orderId;
     if (!orderId) {
       this.logger.warn(`Evento ${routingKey} sin orderId; ignorado`);

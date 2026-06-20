@@ -1,4 +1,5 @@
 export type OrderStatus =
+  | 'DRAFT'
   | 'CREATED'
   | 'PENDING_PAYMENT'
   | 'PAYMENT_APPROVED'
@@ -7,7 +8,9 @@ export type OrderStatus =
   | 'READY_FOR_PICKUP'
   | 'DELIVERED'
   | 'CANCELLED'
-  | 'FAILED';
+  | 'FAILED'
+  | 'PARTIALLY_RETURNED'
+  | 'RETURNED';
 
 export type OrderActorType = 'customer' | 'vendor' | 'system' | 'payment' | 'fulfillment';
 export type OrderPaymentMethod = 'cash' | 'wallet' | 'card' | 'transfer';
@@ -16,8 +19,9 @@ export type OrderSource = 'web' | 'mobile' | 'admin';
 
 // Listas de valores permitidos, reutilizadas por los validadores de DTOs.
 export const ORDER_STATUS_VALUES: OrderStatus[] = [
-  'CREATED', 'PENDING_PAYMENT', 'PAYMENT_APPROVED', 'CONFIRMED',
+  'DRAFT', 'CREATED', 'PENDING_PAYMENT', 'PAYMENT_APPROVED', 'CONFIRMED',
   'IN_PREPARATION', 'READY_FOR_PICKUP', 'DELIVERED', 'CANCELLED', 'FAILED',
+  'PARTIALLY_RETURNED', 'RETURNED',
 ];
 export const ORDER_ACTOR_TYPES: OrderActorType[] = ['customer', 'vendor', 'system', 'payment', 'fulfillment'];
 export const ORDER_PAYMENT_METHODS: OrderPaymentMethod[] = ['cash', 'wallet', 'card', 'transfer'];
@@ -89,13 +93,18 @@ export interface Order {
 }
 
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  // DRAFT es el carrito: acumula ítems hasta el checkout, que lo lleva a pago.
+  DRAFT: ['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'],
   CREATED: ['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'],
   PENDING_PAYMENT: ['PAYMENT_APPROVED', 'CANCELLED', 'FAILED'],
   PAYMENT_APPROVED: ['CONFIRMED', 'CANCELLED', 'FAILED'],
-  CONFIRMED: ['IN_PREPARATION', 'CANCELLED', 'FAILED'],
+  CONFIRMED: ['IN_PREPARATION', 'CANCELLED', 'FAILED', 'PARTIALLY_RETURNED', 'RETURNED'],
   IN_PREPARATION: ['READY_FOR_PICKUP', 'FAILED'],
-  READY_FOR_PICKUP: ['DELIVERED', 'FAILED'],
-  DELIVERED: [],
+  READY_FOR_PICKUP: ['DELIVERED', 'FAILED', 'PARTIALLY_RETURNED', 'RETURNED'],
+  DELIVERED: ['PARTIALLY_RETURNED', 'RETURNED'],
+  // Una devolución parcial admite devoluciones adicionales hasta completarse.
+  PARTIALLY_RETURNED: ['PARTIALLY_RETURNED', 'RETURNED'],
+  RETURNED: [],
   CANCELLED: [],
   FAILED: ['CANCELLED'],
 };

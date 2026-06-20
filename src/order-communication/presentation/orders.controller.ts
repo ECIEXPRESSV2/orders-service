@@ -1,7 +1,15 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from '../application/orders.service';
-import { CancelOrderDto, CreateOrderDto, RateOrderDto, UpdateOrderStatusDto } from '../application/orders.dto';
+import {
+  CancelOrderDto,
+  CreateDraftDto,
+  CreateOrderDto,
+  RateOrderDto,
+  RequestReturnDto,
+  UpdateOrderStatusDto,
+  UpsertCartItemDto,
+} from '../application/orders.dto';
 import { FirebaseAuthGuard } from '../../common/auth/firebase-auth.guard';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthUser } from '../../common/auth/auth-user';
@@ -18,6 +26,30 @@ export class OrdersController {
   create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
     // El comprador siempre es el usuario autenticado, no lo que venga en el body.
     return this.ordersService.createOrder({ ...dto, customerId: user.userId });
+  }
+
+  @Post('draft')
+  @ApiOperation({ summary: 'Create a cart (DRAFT order) for a store' })
+  createDraft(@Body() dto: CreateDraftDto, @CurrentUser() user: AuthUser) {
+    return this.ordersService.createDraft({ ...dto, customerId: user.userId });
+  }
+
+  @Post(':id/items')
+  @ApiOperation({ summary: 'Add/update/remove a cart line (quantity 0 removes)' })
+  setCartItem(@Param('id') id: string, @Body() dto: UpsertCartItemDto) {
+    return this.ordersService.setCartItem(id, dto);
+  }
+
+  @Post(':id/checkout')
+  @ApiOperation({ summary: 'Check out a cart: move to payment and charge wallet' })
+  checkout(@Param('id') id: string) {
+    return this.ordersService.checkout(id);
+  }
+
+  @Post(':id/returns')
+  @ApiOperation({ summary: 'Request a return (full or partial) for an order' })
+  requestReturn(@Param('id') id: string, @Body() dto: RequestReturnDto) {
+    return this.ordersService.requestReturn(id, dto);
   }
 
   @Get()

@@ -11,6 +11,15 @@ import { CreateOrderDto } from './orders.dto';
 class FakeOrderRepository implements OrderRepository {
   store = new Map<string, Order>();
   async save(order: Order) { this.store.set(order.id, JSON.parse(JSON.stringify(order))); return order; }
+  async replaceItems(orderId: string, items: Order['items'], amounts: { subtotalAmount: number; discountAmount: number; totalAmount: number }) {
+    const o = this.store.get(orderId)!;
+    o.items = JSON.parse(JSON.stringify(items));
+    o.subtotalAmount = amounts.subtotalAmount;
+    o.discountAmount = amounts.discountAmount;
+    o.totalAmount = amounts.totalAmount;
+    this.store.set(orderId, o);
+    return JSON.parse(JSON.stringify(o));
+  }
   async findById(id: string) { const o = this.store.get(id); return o ? JSON.parse(JSON.stringify(o)) : null; }
   async findAll() { return [...this.store.values()]; }
   async findByCustomerId(customerId: string) { return [...this.store.values()].filter((o) => o.customerId === customerId); }
