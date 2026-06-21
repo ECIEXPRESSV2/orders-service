@@ -177,3 +177,60 @@ chat (en vez de usar el `storeId` como marcador).
 Bajo. Order ya funciona con la aproximación actual; con este endpoint, mejoramos `vendorId`.
 
 **Prioridad: BAJA.**
+
+---
+
+# ACTUALIZACIÓN 2026-06-21 — Alineación de eventos del bus
+
+> Revisamos los eventos de Order contra el **código** (no los PDF de catálogo) de financial,
+> fulfillment, products e identity. Resumen: orders↔financial↔fulfillment↔products **ya está
+> alineado** en código (incluido `order.return.confirmed`, que financial ya consume). Lo que
+> sigue son ajustes para cerrar el "mismo idioma" del bus. Order ya hizo su parte (ver más abajo).
+
+## A) Cambios que YA hicimos en orders (informativo, no requieren acción de ustedes)
+
+- Order ahora **consume** `identity.store.status_changed` (bloquea pedidos si la tienda cerró)
+  e `identity.user.deactivated` (revoca las sesiones WebSocket del usuario). Antes no los
+  escuchábamos. Ya enlazamos esas routing keys exactas.
+- Order ahora agrega al sobre de **todos** sus eventos los 5 metadatos estándar:
+  `{ eventVersion, source, correlationId, occurredAt, idempotencyKey }` (igual que identity/fulfillment).
+- El `POST /orders` directo ahora también emite `order.cart.created` + `order.cart.item_changed`
+  (con `cartId == orderId`) antes de `order.order.created`, para que **products pueda reservar
+  stock** también en ese flujo, no solo en el de carrito/checkout.
+
+## B) → IDENTITY-SERVICE y FINANCIAL-SERVICE (mismatch de nombres) — Prioridad: ALTA
+
+**Problema.** financial **consume** `identity.user.deleted` y `identity.store.deleted`
+(`financial-service/src/events/event-patterns.ts`), pero identity **nunca publica** esas keys:
+publica `identity.user.deactivated` y `identity.store.status_changed`
+(`identity` event catalog). Resultado: la baja/desactivación de billetera en financial **nunca
+se dispara**.
+
+**Acción pedida (a coordinar entre identity y financial).** Unifiquen el nombre:
+- Opción 1 (recomendada): financial cambia sus consumidores a `identity.user.deactivated` y
+  `identity.store.status_changed` (y usa `newStatus` para decidir si desactiva).
+- Opción 2: identity publica además `identity.user.deleted` / `identity.store.deleted` cuando
+  aplique baja definitiva.
+
+Order ya consume `identity.user.deactivated` / `identity.store.status_changed`, así que la
+Opción 1 deja a todo el bus usando el mismo nombre.
+
+## C) → NOTIFICATIONS y REPORTING (confirmar bindings) — Prioridad: MEDIA
+
+No tenemos su catálogo a la mano. Confirmen que su cola enlaza (binding `order.#` o las keys
+exactas) y que reaccionan a:
+`order.order.created`, `order.order.status_changed`, `order.order.confirmed`,
+`order.order.cancelled` y `order.chat.message.sent` (este último, notifications, para avisar al
+receptor del chat). Los payloads están en `docs/CATALOGO-DE-EVENTOS.md` §2.
+
+## D) → FINANCIAL y PRODUCTS (sus catálogos en PDF están desactualizados) — Prioridad: BAJA
+
+Solo es actualizar documentación; el código ya está bien:
+- El catálogo de **financial** no lista `order.return.confirmed` como consumido, pero el código
+  **sí lo consume** (`ConsumedEvents.RETURN_CONFIRMED`) y espera exactamente
+  `{ orderId, buyerId, storeId, full, refundAmount }` — que es lo que Order publica. ✔️
+- El catálogo de **financial** tampoco lista `financial.wallet.topup.failed`, que el código publica.
+- El catálogo de **products** no detalla el shape de `lines` en `products.cart.priced` /
+  `products.return.priced`. Confirmado contra código: Order usa
+  `cart.priced.lines[] = { productId, name, imageUrl?, unitPrice, quantity, totalAmount }` y
+  `return.priced.lines[] = { productId, quantity, amount }`. ✔️ (coinciden).

@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { OrdersService } from './orders.service';
+import { StoreDirectoryService } from './store-directory.service';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
 import type { OrderRepository } from './ports/order.repository';
 import type { EventPublisher } from './ports/event-publisher';
@@ -56,7 +57,7 @@ describe('OrdersService', () => {
   beforeEach(() => {
     repo = new FakeOrderRepository();
     events = new FakeEventPublisher();
-    service = new OrdersService(repo, events, identity, products, communication, new RealtimeHubService());
+    service = new OrdersService(repo, events, identity, products, communication, new RealtimeHubService(), new StoreDirectoryService());
   });
 
   it('crea un pedido wallet en PENDING_PAYMENT y emite order.order.created', async () => {
@@ -78,7 +79,7 @@ describe('OrdersService', () => {
     const blocked = new OrdersService(
       repo, events,
       { getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }) },
-      products, communication, new RealtimeHubService(),
+      products, communication, new RealtimeHubService(), new StoreDirectoryService(),
     );
     await expect(blocked.createOrder(buildDto())).rejects.toBeInstanceOf(ConflictException);
   });

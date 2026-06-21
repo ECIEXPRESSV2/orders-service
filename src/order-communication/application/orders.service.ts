@@ -10,7 +10,13 @@ import type { IdentityPort } from './ports/identity.port';
 import { PRODUCTS_PORT } from './ports/products.port';
 import type { ProductsPort } from './ports/products.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
-import type { IncomingCartPricedEvent, IncomingReturnPricedEvent } from '../infrastructure/messaging/event-contracts';
+import type {
+  IncomingCartPricedEvent,
+  IncomingReturnPricedEvent,
+  IncomingStoreStatusChangedEvent,
+  IncomingUserDeactivatedEvent,
+} from '../infrastructure/messaging/event-contracts';
+import { StoreDirectoryService } from './store-directory.service';
 import {
   CreateOrderDto,
   CreateDraftDto,
@@ -50,7 +56,19 @@ export class OrdersService {
     @Inject(PRODUCTS_PORT) private readonly products: ProductsPort,
     private readonly communicationService: CommunicationService,
     private readonly realtimeHub: RealtimeHubService,
+    private readonly storeDirectory: StoreDirectoryService,
   ) {}
+
+  /**
+   * Bloquea la operación si la proyección local de identity sabe que la tienda está
+   * cerrada. El chequeo síncrono contra identity sigue corriendo después como respaldo.
+   */
+  private assertStoreNotClosed(storeId: string): void {
+    const cached = this.storeDirectory.isBlocked(storeId);
+    if (cached.blocked) {
+      throw new ConflictException(`La tienda no está disponible: ${cached.reason}`);
+    }
+  }
 
   async createOrder(dto: CreateOrderDto): Promise<OrderResponseDto> {
     if (!dto.items.length) {
@@ -61,7 +79,9 @@ export class OrdersService {
     }
     const customerId = dto.customerId;
 
-    // 1) La tienda debe poder aceptar pedidos (identity-service).
+    // 1) La tienda debe poder aceptar pedidos: primero la proyección local
+    // (identity.store.status_changed) y luego el chequeo síncrono autoritativo.
+    this.assertStoreNotClosed(dto.storeId);
     const availability = await this.identity.getStoreAvailability(dto.storeId);
     if (!availability.available) {
       throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
@@ -115,7 +135,24 @@ export class OrdersService {
       customerId: order.customerId,
       vendorId: order.storeId,
     });
-    // Evento de creación: financial retiene el pago, notifications avisa al comprador.
+    // products-service reserva stock leyendo su proyección de carrito (cartId = orderId),
+    // construida a partir de los eventos de carrito. En el path directo (sin checkout)
+    // sembramos esa proyección aquí para que products pueda reservar stock igual que en
+    // el flujo de carrito. orders no recotiza: products ignora el precio (usa el suyo) y
+    // su `products.cart.priced` de respuesta se descarta porque el pedido ya no es DRAFT.
+    await this.events.publish(ORDER_EVENTS.CART_CREATED, {
+      cartId: order.id,
+      buyerId: order.customerId,
+      storeId: order.storeId,
+      currency: order.currency,
+    });
+    await this.events.publish(ORDER_EVENTS.CART_ITEM_CHANGED, {
+      cartId: order.id,
+      storeId: order.storeId,
+      currency: order.currency,
+      items: order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+    });
+    // Evento de creación: financial retiene el pago, products reserva stock, notifications avisa.
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,
       buyerId: order.customerId,
@@ -149,6 +186,7 @@ export class OrdersService {
     if (!dto.customerId) {
       throw new BadRequestException('customerId is required');
     }
+    this.assertStoreNotClosed(dto.storeId);
     const availability = await this.identity.getStoreAvailability(dto.storeId);
     if (!availability.available) {
       throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
@@ -467,6 +505,24 @@ export class OrdersService {
     if (!order || !canTransitionOrder(order.status, 'CANCELLED')) return;
     const cancelled = this.transitionTo(order, 'CANCELLED', 'fulfillment', 'Pickup QR expired');
     await this.finalize(order.status, cancelled);
+  }
+
+  // ─── Eventos de identity-service ─────────────────────────────────
+
+  /** identity.store.status_changed -> actualiza la proyección local de estado de tienda. */
+  applyStoreStatusChanged(event: IncomingStoreStatusChangedEvent): void {
+    this.storeDirectory.applyStatusChanged(event.storeId, event.newStatus, event.reason);
+  }
+
+  /** identity.user.deactivated -> revoca las sesiones WebSocket activas del usuario. */
+  handleUserDeactivated(event: IncomingUserDeactivatedEvent): void {
+    if (!event.userId) return;
+    // El gateway escucha este evento del hub y desconecta los sockets del usuario.
+    this.realtimeHub.publish({
+      type: 'session:revoked',
+      payload: { userId: event.userId, reason: event.reason },
+      occurredAt: new Date().toISOString(),
+    });
   }
 
   // ─── helpers ────────────────────────────────────────────────
