@@ -46,6 +46,7 @@ export class ProductsHttpClient implements ProductsPort {
         name: product.name ?? item.name,
         description: item.description,
         imageUrl: item.imageUrl,
+        notes: item.notes,
         unitPrice: product.price, // precio autoritativo del catálogo
         quantity: item.quantity,
       };

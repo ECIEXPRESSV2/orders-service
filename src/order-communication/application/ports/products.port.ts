@@ -3,6 +3,8 @@ export interface ValidatedItem {
   name: string;
   description?: string;
   imageUrl?: string;
+  /** Observación del comprador para la línea (passthrough; products no la altera). */
+  notes?: string;
   /** Precio unitario autoritativo en centavos COP. */
   unitPrice: number;
   quantity: number;
@@ -13,6 +15,7 @@ export interface ProductItemInput {
   name: string;
   description?: string;
   imageUrl?: string;
+  notes?: string;
   unitPrice: number;
   quantity: number;
 }

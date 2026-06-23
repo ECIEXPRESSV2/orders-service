@@ -20,11 +20,16 @@ export class OutboxService implements EventPublisher {
 
   async publish(routingKey: string, payload: Record<string, unknown>): Promise<void> {
     const id = randomUUID();
+    // Sobre estándar compartido del bus (idéntico al de identity/fulfillment):
+    // eventVersion, source, correlationId, occurredAt, idempotencyKey. Si el caso de
+    // uso propaga un correlationId (trazabilidad entre servicios), se respeta.
     const enriched = {
       ...payload,
-      idempotencyKey: id,
-      occurredAt: new Date().toISOString(),
+      eventVersion: 1,
       source: EVENT_SOURCE,
+      correlationId: (payload.correlationId as string | undefined) ?? null,
+      occurredAt: new Date().toISOString(),
+      idempotencyKey: id,
     };
     const event = this.outbox.create({
       id,

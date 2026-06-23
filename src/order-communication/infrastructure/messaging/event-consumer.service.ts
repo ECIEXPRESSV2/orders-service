@@ -10,6 +10,8 @@ import {
   IncomingEventEnvelope,
   type IncomingCartPricedEvent,
   type IncomingReturnPricedEvent,
+  type IncomingStoreStatusChangedEvent,
+  type IncomingUserDeactivatedEvent,
 } from './event-contracts';
 
 /**
@@ -50,6 +52,18 @@ export class EventConsumerService implements OnModuleInit {
     if (routingKey === CONSUMED_EVENTS.RETURN_PRICED) {
       await this.ordersService.applyReturnPriced(event as unknown as IncomingReturnPricedEvent);
       this.logger.log(`Devolución aplicada: order ${event.orderId}`);
+      return;
+    }
+
+    // Eventos de identity: no traen orderId. Son idempotentes por naturaleza
+    // (actualizan una proyección / revocan sesiones), así que se aplican siempre.
+    if (routingKey === CONSUMED_EVENTS.STORE_STATUS_CHANGED) {
+      this.ordersService.applyStoreStatusChanged(event as unknown as IncomingStoreStatusChangedEvent);
+      return;
+    }
+    if (routingKey === CONSUMED_EVENTS.USER_DEACTIVATED) {
+      this.ordersService.handleUserDeactivated(event as unknown as IncomingUserDeactivatedEvent);
+      this.logger.log(`Usuario desactivado: sesiones revocadas (${(event as { userId?: string }).userId})`);
       return;
     }
 
