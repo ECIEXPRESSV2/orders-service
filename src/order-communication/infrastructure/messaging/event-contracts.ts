@@ -3,7 +3,8 @@
  * `eciexpress_events` (topic). Routing key: `servicio.entidad.accion`.
  *
  * Envelope estándar (lo agrega el OutboxService a TODO payload):
- *   { ...payload, idempotencyKey, occurredAt (ISO-8601 UTC), source: 'orders-service' }
+ *   { ...payload, eventVersion, source: 'orders-service', correlationId, occurredAt (ISO-8601 UTC), idempotencyKey }
+ * Alineado con el sobre compartido de identity/fulfillment (mismos cinco metadatos).
  */
 
 export const EVENT_SOURCE = 'orders-service';
@@ -33,6 +34,9 @@ export const CONSUMED_EVENTS = {
   // products-service responde con la cotización del carrito y de la devolución.
   CART_PRICED: 'products.cart.priced',
   RETURN_PRICED: 'products.return.priced',
+  // identity-service: orders reacciona para bloquear pedidos y revocar sesiones.
+  STORE_STATUS_CHANGED: 'identity.store.status_changed',
+  USER_DEACTIVATED: 'identity.user.deactivated',
 } as const;
 
 export const CONSUMED_ROUTING_KEYS: string[] = Object.values(CONSUMED_EVENTS);
@@ -108,4 +112,21 @@ export interface IncomingReturnPricedEvent {
   full: boolean;
   refundAmount: number; // centavos COP
   lines: Array<{ productId: string; quantity: number; amount: number }>;
+}
+
+/** Estados de tienda que publica identity en `identity.store.status_changed`. */
+export type IncomingStoreStatus = 'OPEN' | 'CLOSED' | 'TEMPORARILY_CLOSED';
+
+/** Payload de `identity.store.status_changed`: cambio de estado de un punto de venta. */
+export interface IncomingStoreStatusChangedEvent {
+  storeId: string;
+  previousStatus?: IncomingStoreStatus;
+  newStatus: IncomingStoreStatus;
+  reason?: string;
+}
+
+/** Payload de `identity.user.deactivated`: usuario inactivado o suspendido. */
+export interface IncomingUserDeactivatedEvent {
+  userId: string;
+  reason?: string;
 }

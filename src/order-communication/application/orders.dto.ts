@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -38,6 +39,12 @@ export class CreateOrderItemDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ example: 'Sin cebolla', description: 'Observación del comprador para esta línea' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  notes?: string;
 
   @ApiPropertyOptional({ example: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd' })
   @IsOptional()
@@ -107,6 +114,17 @@ export class CreateOrderDto {
   @IsInt()
   @Min(0)
   discountAmount?: number;
+
+  @ApiPropertyOptional({ example: '2026-06-21T15:30:00.000Z', description: 'Hora de recogida programada (ISO-8601)' })
+  @IsOptional()
+  @IsISO8601()
+  scheduledPickupAt?: string;
+
+  @ApiPropertyOptional({ description: 'Clave de idempotencia; normalmente se envía en el header Idempotency-Key.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  idempotencyKey?: string;
 }
 
 export class CreateDraftDto {
@@ -148,6 +166,11 @@ export class CreateDraftDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-21T15:30:00.000Z', description: 'Hora de recogida programada (ISO-8601)' })
+  @IsOptional()
+  @IsISO8601()
+  scheduledPickupAt?: string;
 }
 
 export class UpsertCartItemDto {
@@ -164,6 +187,12 @@ export class UpsertCartItemDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @ApiPropertyOptional({ example: 'Sin cebolla', description: 'Observación del comprador para esta línea' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  notes?: string;
 
   @ApiPropertyOptional({ example: 'https://images.example.com/combo.jpg' })
   @IsOptional()
@@ -294,6 +323,9 @@ export class OrderResponseDto {
     createdAt: string;
     updatedAt: string;
   };
+  scheduledPickupAt?: string;
+  /** Hora estimada en que el pedido estará listo (programada o createdAt + preparación). */
+  estimatedReadyAt?: string;
   pickupExpiresAt?: string;
   createdAt!: string;
   updatedAt!: string;

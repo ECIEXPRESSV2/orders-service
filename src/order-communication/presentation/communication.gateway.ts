@@ -29,12 +29,38 @@ export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnec
   afterInit(server: Server): void {
     this.server = server;
     this.realtimeHub.stream().subscribe((event) => {
+      // Revocación de sesión (identity.user.deactivated): no se emite a clientes,
+      // se desconectan los sockets activos del usuario.
+      if (event.type === 'session:revoked') {
+        const userId = (event.payload as { userId?: string })?.userId;
+        if (userId) void this.disconnectUser(userId);
+        return;
+      }
       if (event.room) {
         this.server.to(event.room).emit(event.type, event.payload);
         return;
       }
       this.server.emit(event.type, event.payload);
     });
+  }
+
+  /** Desconecta todas las conexiones WebSocket de un usuario (sesión revocada). */
+  private async disconnectUser(userId: string): Promise<void> {
+    try {
+      const sockets = await this.server.fetchSockets();
+      let count = 0;
+      for (const socket of sockets) {
+        if ((socket.data as { userId?: string })?.userId === userId) {
+          socket.disconnect();
+          count += 1;
+        }
+      }
+      if (count > 0) {
+        this.logger.log(`Sesiones WS revocadas para ${userId}: ${count} socket(s) desconectado(s)`);
+      }
+    } catch (error) {
+      this.logger.warn(`No se pudieron revocar sesiones de ${userId}: ${(error as Error).message}`);
+    }
   }
 
   /**

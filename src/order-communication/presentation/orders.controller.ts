@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from '../application/orders.service';
 import {
@@ -23,9 +23,18 @@ export class OrdersController {
 
   @Post()
   @ApiOperation({ summary: 'Create order' })
-  create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
+  create(
+    @Body() dto: CreateOrderDto,
+    @CurrentUser() user: AuthUser,
+    @Headers('Idempotency-Key') idempotencyKey?: string,
+  ) {
     // El comprador siempre es el usuario autenticado, no lo que venga en el body.
-    return this.ordersService.createOrder({ ...dto, customerId: user.userId });
+    // La clave de idempotencia llega por header (estándar); cae al body si no viene.
+    return this.ordersService.createOrder({
+      ...dto,
+      customerId: user.userId,
+      idempotencyKey: idempotencyKey ?? dto.idempotencyKey,
+    });
   }
 
   @Post('draft')
