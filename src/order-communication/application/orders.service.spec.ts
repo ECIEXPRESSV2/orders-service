@@ -6,12 +6,18 @@ import type { OrderRepository } from './ports/order.repository';
 import type { EventPublisher } from './ports/event-publisher';
 import type { IdentityPort } from './ports/identity.port';
 import type { ProductsPort } from './ports/products.port';
-import type { Order } from '../domain/order.models';
+import type { Order, OrderStatus } from '../domain/order.models';
 import { CreateOrderDto } from './orders.dto';
 
 class FakeOrderRepository implements OrderRepository {
   store = new Map<string, Order>();
   async save(order: Order) { this.store.set(order.id, JSON.parse(JSON.stringify(order))); return order; }
+  async saveTransition(order: Order, expectedFromStatus: OrderStatus) {
+    const current = this.store.get(order.id);
+    if (!current || current.status !== expectedFromStatus) return null;
+    this.store.set(order.id, JSON.parse(JSON.stringify(order)));
+    return JSON.parse(JSON.stringify(order));
+  }
   async replaceItems(orderId: string, items: Order['items'], amounts: { subtotalAmount: number; discountAmount: number; totalAmount: number }) {
     const o = this.store.get(orderId)!;
     o.items = JSON.parse(JSON.stringify(items));
@@ -22,6 +28,10 @@ class FakeOrderRepository implements OrderRepository {
     return JSON.parse(JSON.stringify(o));
   }
   async findById(id: string) { const o = this.store.get(id); return o ? JSON.parse(JSON.stringify(o)) : null; }
+  async findByIdempotencyKey(key: string) {
+    const o = [...this.store.values()].find((order) => order.idempotencyKey === key);
+    return o ? JSON.parse(JSON.stringify(o)) : null;
+  }
   async findAll() { return [...this.store.values()]; }
   async findByCustomerId(customerId: string) { return [...this.store.values()].filter((o) => o.customerId === customerId); }
   async getFrequentProducts() { return []; }
@@ -121,5 +131,45 @@ describe('OrdersService', () => {
   it('no permite calificar un pedido que no fue entregado', async () => {
     const created = await service.createOrder(buildDto()); // PENDING_PAYMENT
     await expect(service.rateOrder(created.id, { score: 5 })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('createOrder es idempotente: la misma idempotencyKey no duplica el pedido', async () => {
+    const dto = buildDto({ idempotencyKey: 'idem-1' });
+    const first = await service.createOrder(dto);
+    const second = await service.createOrder(dto);
+    expect(second.id).toBe(first.id);
+    expect(repo.store.size).toBe(1);
+  });
+
+  it('conserva la observación por ítem (notes)', async () => {
+    const order = await service.createOrder(
+      buildDto({ items: [{ productId: 'p1', name: 'Café', unitPrice: 350000, quantity: 1, notes: 'sin azúcar' }] }),
+    );
+    expect(order.items[0].notes).toBe('sin azúcar');
+  });
+
+  it('expone estimatedReadyAt y usa la hora programada cuando se indica', async () => {
+    const when = '2026-06-21T15:30:00.000Z';
+    const order = await service.createOrder(buildDto({ scheduledPickupAt: when }));
+    expect(order.scheduledPickupAt).toBe(when);
+    expect(order.estimatedReadyAt).toBe(when);
+  });
+
+  it('UC-015: rechaza una transición inválida con 409 (no 500)', async () => {
+    const created = await service.createOrder(buildDto()); // PENDING_PAYMENT
+    await expect(
+      service.updateOrderStatus(created.id, { status: 'DELIVERED', actorType: 'vendor' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const unchanged = await service.getOrderById(created.id);
+    expect(unchanged.status).toBe('PENDING_PAYMENT');
+  });
+
+  it('UC-018: lanza conflicto si la transición fue pisada concurrentemente', async () => {
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CONFIRMED
+    // Simula que otro proceso cambió el estado entre la lectura y el guardado.
+    jest.spyOn(repo, 'saveTransition').mockResolvedValueOnce(null);
+    await expect(
+      service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });

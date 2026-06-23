@@ -46,6 +46,8 @@ const RETURNABLE_STATUSES: OrderStatus[] = [
 ];
 
 const PICKUP_WINDOW_MS = Number(process.env.PICKUP_WINDOW_HOURS ?? 2) * 3_600_000;
+/** Minutos estimados de preparación, usados para el ETA cuando no hay hora programada. */
+const PREP_TIME_MINUTES = Number(process.env.PREP_TIME_MINUTES ?? 15);
 
 @Injectable()
 export class OrdersService {
@@ -79,10 +81,18 @@ export class OrdersService {
     }
     const customerId = dto.customerId;
 
+    // 0) Idempotencia de creación: si ya existe un pedido con esta clave, lo devolvemos
+    // tal cual (evita pedidos duplicados ante reintentos o doble clic).
+    if (dto.idempotencyKey) {
+      const existing = await this.orderRepository.findByIdempotencyKey(dto.idempotencyKey);
+      if (existing) return this.toResponse(existing);
+    }
+
     // 1) La tienda debe poder aceptar pedidos: primero la proyección local
-    // (identity.store.status_changed) y luego el chequeo síncrono autoritativo.
+    // (identity.store.status_changed) y luego el chequeo síncrono autoritativo
+    // (incluye la hora de recogida programada, si la hay).
     this.assertStoreNotClosed(dto.storeId);
-    const availability = await this.identity.getStoreAvailability(dto.storeId);
+    const availability = await this.identity.getStoreAvailability(dto.storeId, dto.scheduledPickupAt);
     if (!availability.available) {
       throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
     }
@@ -96,6 +106,7 @@ export class OrdersService {
       productId: item.productId,
       name: item.name,
       description: item.description,
+      notes: item.notes,
       imageUrl: item.imageUrl,
       unitPrice: item.unitPrice,
       quantity: item.quantity,
@@ -117,6 +128,8 @@ export class OrdersService {
       currency: dto.currency,
       source: dto.source ?? 'web',
       notes: dto.notes,
+      idempotencyKey: dto.idempotencyKey,
+      scheduledPickupAt: dto.scheduledPickupAt,
       subtotalAmount: amounts.subtotalAmount,
       discountAmount,
       totalAmount: amounts.totalAmount,
@@ -126,7 +139,16 @@ export class OrdersService {
       updatedAt: createdAt,
     };
 
-    await this.orderRepository.save(order);
+    try {
+      await this.orderRepository.save(order);
+    } catch (error) {
+      // Carrera de idempotencia: otro request creó el pedido con la misma clave.
+      if (dto.idempotencyKey && this.isUniqueViolation(error)) {
+        const existing = await this.orderRepository.findByIdempotencyKey(dto.idempotencyKey);
+        if (existing) return this.toResponse(existing);
+      }
+      throw error;
+    }
     // Conversación comprador-vendedor del pedido (RF-09). vendorId se aproxima
     // con storeId hasta que identity exponga el staff de la tienda.
     await this.communicationService.ensureConversationForOrder({
@@ -187,7 +209,7 @@ export class OrdersService {
       throw new BadRequestException('customerId is required');
     }
     this.assertStoreNotClosed(dto.storeId);
-    const availability = await this.identity.getStoreAvailability(dto.storeId);
+    const availability = await this.identity.getStoreAvailability(dto.storeId, dto.scheduledPickupAt);
     if (!availability.available) {
       throw new ConflictException(`La tienda no está disponible${availability.reason ? `: ${availability.reason}` : ''}`);
     }
@@ -207,6 +229,7 @@ export class OrdersService {
       currency,
       source: dto.source ?? 'web',
       notes: dto.notes,
+      scheduledPickupAt: dto.scheduledPickupAt,
       subtotalAmount: 0,
       discountAmount: 0,
       totalAmount: 0,
@@ -243,6 +266,7 @@ export class OrdersService {
         ...items[index],
         quantity: dto.quantity,
         name: dto.name ?? items[index].name,
+        notes: dto.notes ?? items[index].notes,
         imageUrl: dto.imageUrl ?? items[index].imageUrl,
       };
     } else {
@@ -250,6 +274,7 @@ export class OrdersService {
         id: crypto.randomUUID(),
         productId: dto.productId,
         name: dto.name ?? 'Producto',
+        notes: dto.notes,
         imageUrl: dto.imageUrl,
         unitPrice: 0, // se completa cuando products cotiza el carrito
         quantity: dto.quantity,
@@ -284,6 +309,7 @@ export class OrdersService {
         id: existing?.id ?? crypto.randomUUID(),
         productId: line.productId,
         name: line.name,
+        notes: existing?.notes, // products no maneja notas; preservamos la del comprador
         imageUrl: line.imageUrl,
         unitPrice: line.unitPrice,
         quantity: line.quantity,
@@ -399,6 +425,11 @@ export class OrdersService {
 
   async updateOrderStatus(id: string, dto: UpdateOrderStatusDto): Promise<OrderResponseDto> {
     const order = await this.requireOrder(id);
+    // Validar la transición ANTES de transicionar: un cambio inválido es un error del
+    // cliente (409), no un 500. Sin esto, transitionOrder lanza un Error genérico.
+    if (!canTransitionOrder(order.status, dto.status)) {
+      throw new ConflictException(`Transición inválida: ${order.status} → ${dto.status}`);
+    }
     const previous = order.status;
     const updated = this.transitionTo(order, dto.status, dto.actorType as OrderActorType, dto.reason, dto.actorId);
     await this.finalize(previous, updated);
@@ -407,8 +438,9 @@ export class OrdersService {
 
   async cancelOrder(id: string, dto: CancelOrderDto): Promise<OrderResponseDto> {
     const order = await this.requireOrder(id);
-    if (order.status === 'DELIVERED' || order.status === 'CANCELLED') {
-      throw new ConflictException('Delivered or cancelled orders cannot be cancelled again');
+    // Un pedido entregado/cancelado/devuelto (estado terminal) no admite cancelación.
+    if (!canTransitionOrder(order.status, 'CANCELLED')) {
+      throw new ConflictException(`No se puede cancelar un pedido en estado ${order.status}`);
     }
     const previous = order.status;
     const updated = this.transitionTo(
@@ -526,6 +558,19 @@ export class OrdersService {
   }
 
   // ─── helpers ────────────────────────────────────────────────
+
+  /** Detecta una violación de restricción única de Postgres (código 23505). */
+  private isUniqueViolation(error: unknown): boolean {
+    const e = error as { code?: string; driverError?: { code?: string } };
+    return e?.code === '23505' || e?.driverError?.code === '23505';
+  }
+
+  /** ETA: hora programada si existe; si no, createdAt + minutos de preparación. */
+  private estimatedReadyAt(order: Order): string {
+    if (order.scheduledPickupAt) return order.scheduledPickupAt;
+    return new Date(new Date(order.createdAt).getTime() + PREP_TIME_MINUTES * 60_000).toISOString();
+  }
+
   private transitionTo(
     order: Order,
     toStatus: OrderStatus,
@@ -542,7 +587,14 @@ export class OrdersService {
 
   /** Persiste, emite eventos de dominio y notifica por WebSocket. */
   private async finalize(previousStatus: OrderStatus, order: Order): Promise<void> {
-    await this.orderRepository.save(order);
+    // Persistencia segura ante concurrencia: solo aplica si el pedido sigue en
+    // `previousStatus`. Si otro proceso ya lo cambió, abortamos sin pisar el estado.
+    const saved = await this.orderRepository.saveTransition(order, previousStatus);
+    if (!saved) {
+      throw new ConflictException(
+        `El pedido ${order.id} cambió de estado de forma concurrente (se esperaba ${previousStatus})`,
+      );
+    }
     await this.events.publish(ORDER_EVENTS.STATUS_CHANGED, {
       orderId: order.id,
       buyerId: order.customerId,
@@ -601,6 +653,8 @@ export class OrdersService {
       items: order.items,
       statusHistory: order.statusHistory,
       rating: order.rating,
+      scheduledPickupAt: order.scheduledPickupAt,
+      estimatedReadyAt: this.estimatedReadyAt(order),
       pickupExpiresAt: order.pickupExpiresAt,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,

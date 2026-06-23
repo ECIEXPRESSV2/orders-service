@@ -234,3 +234,20 @@ Solo es actualizar documentación; el código ya está bien:
   `products.return.priced`. Confirmado contra código: Order usa
   `cart.priced.lines[] = { productId, name, imageUrl?, unitPrice, quantity, totalAmount }` y
   `return.priced.lines[] = { productId, quantity, amount }`. ✔️ (coinciden).
+
+## E) → PRODUCTS-SERVICE (desbloquea casos de uso UC-ORD-004 y UC-ORD-005) — Prioridad: ALTA
+
+Esto **ya está pedido** en la sección 2 de este documento (endpoint `GET /products?storeId&ids`),
+pero lo reiteramos porque bloquea dos casos de uso de creación de pedido:
+- **UC-ORD-004** (validar disponibilidad/stock al crear) y **UC-ORD-005** (usar el precio
+  autoritativo del catálogo, no el del cliente).
+
+El lado de Order **ya está listo**: `ProductsHttpClient` valida `isAvailable`/`stock` y toma
+`price` del catálogo; se activa con `USE_PRODUCTS_MOCK=false`. Mientras products no exponga el
+endpoint en el path directo `POST /orders`, Order corre en modo **mock** (confía en el precio del
+cliente → riesgo de manipulación). En el flujo de carrito (`/draft`→`/items`→`/checkout`) la
+validación y el precio sí son autoritativos vía `order.cart.item_changed` → `products.cart.priced`.
+
+**Acción:** exponer `GET /products?storeId={uuid}&ids=id1,id2` →
+`[{ id, storeId, name, price (centavos), currency, isAvailable, stock }]`. En cuanto exista,
+cambiamos el flag y UC-004/UC-005 quedan cerrados sin más cambios en Order.

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Order, OrderItem } from '../../domain/order.models';
+import type { Order, OrderItem, OrderStatus } from '../../domain/order.models';
 import type { FrequentProduct, OrderRepository } from '../../application/ports/order.repository';
 import { OrderEntity } from './order.entity';
 import { OrderItemEntity } from './order-item.entity';
@@ -41,6 +41,7 @@ export class TypeOrmOrderRepository implements OrderRepository {
             productId: item.productId,
             name: item.name,
             description: item.description ?? null,
+            notes: item.notes ?? null,
             imageUrl: item.imageUrl ?? null,
             unitPrice: item.unitPrice,
             quantity: item.quantity,
@@ -62,8 +63,48 @@ export class TypeOrmOrderRepository implements OrderRepository {
     return this.toDomain(reloaded!);
   }
 
+  async saveTransition(order: Order, expectedFromStatus: OrderStatus): Promise<Order | null> {
+    return this.orders.manager.transaction(async (manager) => {
+      // Compare-and-set: solo cambia el estado si sigue siendo el esperado. Si otro
+      // proceso ya transicionó el pedido, affected = 0 y devolvemos null (conflicto).
+      const result = await manager.update(
+        OrderEntity,
+        { id: order.id, status: expectedFromStatus },
+        {
+          status: order.status,
+          pickupExpiresAt: order.pickupExpiresAt ? new Date(order.pickupExpiresAt) : null,
+          cancelledAt: order.cancelledAt ? new Date(order.cancelledAt) : null,
+        },
+      );
+      if (!result.affected) return null;
+
+      // Inserta solo la última entrada del historial (la generada por esta transición).
+      const last = order.statusHistory[order.statusHistory.length - 1];
+      if (last) {
+        await manager.insert(OrderStatusHistoryEntity, {
+          id: last.id,
+          orderId: order.id,
+          fromStatus: last.fromStatus,
+          toStatus: last.toStatus,
+          actorType: last.actorType,
+          actorId: last.actorId ?? null,
+          reason: last.reason ?? null,
+          occurredAt: new Date(last.occurredAt),
+        });
+      }
+
+      const reloaded = await manager.findOne(OrderEntity, { where: { id: order.id } });
+      return reloaded ? this.toDomain(reloaded) : null;
+    });
+  }
+
   async findById(id: string): Promise<Order | null> {
     const entity = await this.orders.findOne({ where: { id } });
+    return entity ? this.toDomain(entity) : null;
+  }
+
+  async findByIdempotencyKey(idempotencyKey: string): Promise<Order | null> {
+    const entity = await this.orders.findOne({ where: { idempotencyKey } });
     return entity ? this.toDomain(entity) : null;
   }
 
@@ -112,6 +153,8 @@ export class TypeOrmOrderRepository implements OrderRepository {
     entity.currency = order.currency;
     entity.source = order.source;
     entity.notes = order.notes ?? null;
+    entity.idempotencyKey = order.idempotencyKey ?? null;
+    entity.scheduledPickupAt = order.scheduledPickupAt ? new Date(order.scheduledPickupAt) : null;
     entity.subtotalAmount = order.subtotalAmount;
     entity.discountAmount = order.discountAmount;
     entity.totalAmount = order.totalAmount;
@@ -126,6 +169,7 @@ export class TypeOrmOrderRepository implements OrderRepository {
       itemEntity.productId = item.productId;
       itemEntity.name = item.name;
       itemEntity.description = item.description ?? null;
+      itemEntity.notes = item.notes ?? null;
       itemEntity.imageUrl = item.imageUrl ?? null;
       itemEntity.unitPrice = item.unitPrice;
       itemEntity.quantity = item.quantity;
@@ -172,6 +216,7 @@ export class TypeOrmOrderRepository implements OrderRepository {
         productId: item.productId,
         name: item.name,
         description: item.description ?? undefined,
+        notes: item.notes ?? undefined,
         imageUrl: item.imageUrl ?? undefined,
         unitPrice: item.unitPrice,
         quantity: item.quantity,
@@ -204,6 +249,8 @@ export class TypeOrmOrderRepository implements OrderRepository {
       currency: entity.currency,
       source: entity.source,
       notes: entity.notes ?? undefined,
+      idempotencyKey: entity.idempotencyKey ?? undefined,
+      scheduledPickupAt: iso(entity.scheduledPickupAt),
       subtotalAmount: entity.subtotalAmount,
       discountAmount: entity.discountAmount,
       totalAmount: entity.totalAmount,

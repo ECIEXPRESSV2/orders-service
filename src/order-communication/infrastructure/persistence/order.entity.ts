@@ -57,6 +57,13 @@ export class OrderEntity {
   @Column({ type: 'text', nullable: true })
   notes?: string | null;
 
+  @Index('UQ_orders_idempotency_key', { unique: true })
+  @Column({ name: 'idempotency_key', type: 'varchar', length: 128, nullable: true })
+  idempotencyKey?: string | null;
+
+  @Column({ name: 'scheduled_pickup_at', type: 'timestamptz', nullable: true })
+  scheduledPickupAt?: Date | null;
+
   @Column({ name: 'subtotal_amount', type: 'bigint', transformer: bigintCentavosTransformer })
   subtotalAmount!: number;
 

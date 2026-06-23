@@ -35,6 +35,8 @@ export interface OrderItem {
   name: string;
   description?: string;
   imageUrl?: string;
+  /** Observación del comprador para esta línea (ej. "sin cebolla"). */
+  notes?: string;
   /** Precio unitario en centavos COP (entero). */
   unitPrice: number;
   quantity: number;
@@ -77,6 +79,10 @@ export interface Order {
   currency: string;
   source: OrderSource;
   notes?: string;
+  /** Clave de idempotencia del request de creación (evita pedidos duplicados). */
+  idempotencyKey?: string;
+  /** ISO-8601 UTC: hora de recogida programada por el comprador (opcional). */
+  scheduledPickupAt?: string;
   /** Montos en centavos COP (enteros). */
   subtotalAmount: number;
   discountAmount: number;
