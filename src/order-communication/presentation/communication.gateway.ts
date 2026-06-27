@@ -71,6 +71,7 @@ export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnec
     try {
       if (process.env.AUTH_DISABLED === 'true') {
         socket.data.userId = socket.handshake.auth?.userId ?? socket.id;
+        this.joinUserRoom(socket);
         return;
       }
       const token = socket.handshake.auth?.token as string | undefined;
@@ -79,11 +80,18 @@ export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnec
       }
       const user = await this.identityAuth.validate(token);
       socket.data.userId = user.userId;
+      this.joinUserRoom(socket);
     } catch {
       this.logger.warn(`WS conexión rechazada (${socket.id}): autenticación inválida`);
       socket.emit('error', { message: 'Unauthorized' });
       socket.disconnect(true);
     }
+  }
+
+  /** Une el socket a su sala personal `user:<id>` para recibir actualizaciones de la lista de chats. */
+  private joinUserRoom(socket: Socket): void {
+    const userId = socket.data.userId as string | undefined;
+    if (userId) socket.join(`user:${userId}`);
   }
 
   @SubscribeMessage('conversation:joined')
