@@ -31,6 +31,8 @@ class FakeCommunicationRepository implements CommunicationRepository {
   async listMessages() { return { items: this.messages, total: this.messages.length }; }
   async saveMessage(m: Message) { this.messages.push(m); return m; }
   async markMessageAsRead(messageId: string) { return this.messages.find((m) => m.id === messageId) ?? null; }
+  async markConversationRead() { return { conversation: this.conv, messageIds: [] as string[] }; }
+  async setConversationStatus(_id: string, status: 'active' | 'archived' | 'closed') { this.conv = { ...this.conv, status }; return this.conv; }
   async setTyping() { /* noop */ }
   async incrementUnreadCounts() { /* noop */ }
   async joinConversation() { return this.conv; }

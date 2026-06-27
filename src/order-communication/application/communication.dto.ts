@@ -130,6 +130,11 @@ export class ConversationQueryDto {
   @IsOptional()
   @IsString()
   storeId?: string;
+
+  @ApiPropertyOptional({ enum: ['active', 'archived', 'closed'] })
+  @IsOptional()
+  @IsIn(['active', 'archived', 'closed'])
+  status?: 'active' | 'archived' | 'closed';
 }
 
 export class MessageQueryDto {

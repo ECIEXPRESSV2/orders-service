@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type {
   Conversation,
+  ConversationStatus,
   Message,
   Participant,
   ParticipantRole,
@@ -33,12 +34,13 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     return entity ? this.toConversation(entity) : null;
   }
 
-  async listConversations(filters?: { orderId?: string; customerId?: string; vendorId?: string; storeId?: string }): Promise<Conversation[]> {
+  async listConversations(filters?: { orderId?: string; customerId?: string; vendorId?: string; storeId?: string; status?: ConversationStatus }): Promise<Conversation[]> {
     const where: Record<string, unknown> = {};
     if (filters?.orderId) where.orderId = filters.orderId;
     if (filters?.customerId) where.customerId = filters.customerId;
     if (filters?.vendorId) where.vendorId = filters.vendorId;
     if (filters?.storeId) where.storeId = filters.storeId;
+    if (filters?.status) where.status = filters.status;
     const entities = await this.conversations.find({ where, order: { updatedAt: 'DESC' } });
     return entities.map((entity) => this.toConversation(entity));
   }
@@ -99,6 +101,43 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     entity.updatedAt = new Date(readAt);
     await this.messages.save(entity);
     return this.toMessage(entity);
+  }
+
+  async markConversationRead(conversationId: string, userId: string): Promise<{ conversation: Conversation; messageIds: string[] }> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) throw new Error(`Conversation ${conversationId} not found`);
+
+    const now = new Date();
+    // Resetea el contador de no leídos del participante y registra la última lectura.
+    entity.participants = entity.participants.map((participant) =>
+      participant.userId === userId ? { ...participant, unreadCount: 0, lastReadAt: now } : participant,
+    );
+    entity.updatedAt = now;
+    await this.conversations.save(entity);
+
+    // Marca como leídos los mensajes entrantes (de otros) que aún no haya leído este usuario.
+    const messages = await this.messages.find({ where: { conversationId } });
+    const updated: MessageEntity[] = [];
+    for (const message of messages) {
+      if (message.senderId === userId) continue;
+      if ((message.readStatuses ?? []).some((status) => status.participantId === userId)) continue;
+      message.readStatuses = [...(message.readStatuses ?? []), { messageId: message.id, participantId: userId, readAt: now.toISOString() }];
+      message.status = 'read';
+      message.updatedAt = now;
+      updated.push(message);
+    }
+    if (updated.length > 0) await this.messages.save(updated);
+
+    return { conversation: this.toConversation(entity), messageIds: updated.map((m) => m.id) };
+  }
+
+  async setConversationStatus(conversationId: string, status: ConversationStatus): Promise<Conversation> {
+    const entity = await this.conversations.findOne({ where: { id: conversationId } });
+    if (!entity) throw new Error(`Conversation ${conversationId} not found`);
+    entity.status = status;
+    entity.updatedAt = new Date();
+    await this.conversations.save(entity);
+    return this.toConversation(entity);
   }
 
   async setTyping(conversationId: string, userId: string, typing: boolean): Promise<void> {
