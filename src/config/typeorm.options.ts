@@ -22,7 +22,7 @@ export function buildTypeOrmOptions(): DataSourceOptions {
     url,
     // Neon exige SSL; rejectUnauthorized=false evita problemas con la cadena
     // de certificados del pooler.
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: true },
     entities: [join(__dirname, '/../**/*.entity{.ts,.js}')],
     migrations: [join(__dirname, '/../migrations/*{.ts,.js}')],
     // Nunca sincronizamos el esquema automáticamente: se usan migraciones.
