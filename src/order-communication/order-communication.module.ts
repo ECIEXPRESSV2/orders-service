@@ -65,9 +65,11 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     { provide: EVENT_PUBLISHER, useClass: OutboxService },
     { provide: IDENTITY_PORT, useClass: IdentityHttpClient },
     {
-      // products-service aún no expone productos -> mock por defecto.
+      // ProductsMockClient solo para desarrollo sin products-service disponible
+      // (USE_PRODUCTS_MOCK=true). En cualquier otro caso, products-service es la
+      // fuente autoritativa de precio/stock/promoción.
       provide: PRODUCTS_PORT,
-      useClass: process.env.USE_PRODUCTS_MOCK === 'false' ? ProductsHttpClient : ProductsMockClient,
+      useClass: process.env.USE_PRODUCTS_MOCK === 'true' ? ProductsMockClient : ProductsHttpClient,
     },
   ],
   exports: [OrdersService, CommunicationService, RealtimeHubService, IdentityAuthClient],

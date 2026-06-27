@@ -32,11 +32,13 @@ import {
   attachRating,
   calculateAmounts,
   canTransitionOrder,
+  CONFIRMED_OR_LATER,
   createHistoryEntry,
   Order,
   OrderActorType,
   OrderItem,
   OrderStatus,
+  STOCK_RELEASING_STATUSES,
   transitionOrder,
 } from '../domain/order.models';
 
@@ -539,6 +541,24 @@ export class OrdersService {
     await this.finalize(order.status, cancelled);
   }
 
+  /**
+   * product.inventory.reservation_rejected -> CANCELLED.
+   * products-service no pudo reservar stock para una línea: no quedan pedidos
+   * parciales, se cancela la orden completa (igual que un QR expirado o un pago
+   * fallido) para no dejarla en un estado intermedio sin inventario garantizado.
+   */
+  async handleStockReservationRejected(orderId: string, reason?: string): Promise<void> {
+    const order = await this.orderRepository.findById(orderId);
+    if (!order || !canTransitionOrder(order.status, 'CANCELLED')) return;
+    const cancelled = this.transitionTo(
+      order,
+      'CANCELLED',
+      'system',
+      reason ?? 'No había stock disponible para completar el pedido',
+    );
+    await this.finalize(order.status, cancelled);
+  }
+
   // ─── Eventos de identity-service ─────────────────────────────────
 
   /** identity.store.status_changed -> actualiza la proyección local de estado de tienda. */
@@ -608,10 +628,20 @@ export class OrdersService {
         pickupExpiresAt: order.pickupExpiresAt,
       });
     }
-    if (order.status === 'CANCELLED' && previousStatus !== 'CANCELLED') {
+    // CANCELLED y FAILED son equivalentes para products-service: en ambos casos la
+    // venta no se concreta y hay que liberar/restituir el stock reservado. Se
+    // publica el mismo evento `order.order.cancelled` para los dos; el guard de
+    // `previousStatus` evita liberar dos veces si una orden FAILED se cancela
+    // después (transición válida: FAILED -> CANCELLED).
+    if (STOCK_RELEASING_STATUSES.has(order.status) && !STOCK_RELEASING_STATUSES.has(previousStatus)) {
+      // wasSold: si la orden ya había pasado por CONFIRMED, confirmReservation ya
+      // descontó el stock físico (venta concretada) y dejó reservedStock en 0.
+      // products-service necesita saberlo para devolver la unidad a `stock`
+      // (restock) en vez de solo soltar una reserva que ya no existe.
       await this.events.publish(ORDER_EVENTS.CANCELLED, {
         orderId: order.id,
         buyerId: order.customerId,
+        wasSold: CONFIRMED_OR_LATER.has(previousStatus),
       });
     }
     this.broadcast(order);

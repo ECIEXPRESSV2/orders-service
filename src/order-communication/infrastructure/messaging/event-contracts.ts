@@ -37,6 +37,8 @@ export const CONSUMED_EVENTS = {
   // identity-service: orders reacciona para bloquear pedidos y revocar sesiones.
   STORE_STATUS_CHANGED: 'identity.store.status_changed',
   USER_DEACTIVATED: 'identity.user.deactivated',
+  // products-service: la reserva de stock para una línea de la orden falló.
+  RESERVATION_REJECTED: 'product.inventory.reservation_rejected',
 } as const;
 
 export const CONSUMED_ROUTING_KEYS: string[] = Object.values(CONSUMED_EVENTS);
@@ -60,6 +62,10 @@ export interface OrderConfirmedPayload {
 export interface OrderCancelledPayload {
   orderId: string;
   buyerId: string;
+  /** true si la orden ya había sido CONFIRMED (o más allá): el stock físico ya
+   *  se había descontado y products-service debe restituirlo, no solo liberar
+   *  una reserva. */
+  wasSold: boolean;
 }
 
 export interface OrderStatusChangedPayload {
@@ -129,4 +135,14 @@ export interface IncomingStoreStatusChangedEvent {
 export interface IncomingUserDeactivatedEvent {
   userId: string;
   reason?: string;
+}
+
+/** Payload de `product.inventory.reservation_rejected`: no había stock para reservar una línea. */
+export interface IncomingReservationRejectedEvent {
+  orderId: string;
+  productId: string;
+  storeId: string;
+  requestedQuantity: number;
+  availableQuantity: number;
+  reason: string;
 }
