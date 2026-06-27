@@ -93,6 +93,13 @@ export class CommunicationService {
       occurredAt: new Date().toISOString(),
     });
 
+    // Actualiza la lista de chats en vivo (preview, hora, no leídos, reordenamiento)
+    // para todos los participantes, estén o no con la conversación abierta.
+    const updated = await this.communicationRepository.findConversationById(dto.conversationId);
+    if (updated) {
+      this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
+    }
+
     // Notifica al otro participante (notifications-service consume este evento).
     const recipientId = senderId === conversation.customerId ? conversation.vendorId : conversation.customerId;
     await this.events.publish(ORDER_EVENTS.CHAT_MESSAGE_SENT, {
@@ -123,6 +130,48 @@ export class CommunicationService {
       occurredAt: new Date().toISOString(),
     });
 
+    return payload;
+  }
+
+  /**
+   * Marca toda la conversación como leída para un usuario: resetea su contador de
+   * no leídos y emite `conversation:read` para que el emisor vea el doble check (leído),
+   * más `conversation:updated` al propio lector para limpiar su badge en la lista.
+   */
+  async markConversationRead(conversationId: string, userId: string): Promise<ConversationResponseDto> {
+    const existing = await this.communicationRepository.findConversationById(conversationId);
+    if (!existing) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+    const { conversation, messageIds } = await this.communicationRepository.markConversationRead(conversationId, userId);
+    const now = new Date().toISOString();
+    if (messageIds.length > 0) {
+      this.realtimeHub.publish({
+        type: 'conversation:read',
+        room: `conversation:${conversationId}`,
+        payload: { conversationId, readerId: userId, messageIds, readAt: now },
+        occurredAt: now,
+      });
+    }
+    const payload = this.toConversationResponse(conversation);
+    this.realtimeHub.publish({
+      type: 'conversation:updated',
+      room: `user:${userId}`,
+      payload,
+      occurredAt: now,
+    });
+    return payload;
+  }
+
+  /** Archiva o reactiva una conversación y lo refleja en la lista de cada participante. */
+  async setConversationStatus(conversationId: string, status: 'active' | 'archived' | 'closed'): Promise<ConversationResponseDto> {
+    const existing = await this.communicationRepository.findConversationById(conversationId);
+    if (!existing) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+    const conversation = await this.communicationRepository.setConversationStatus(conversationId, status);
+    const payload = this.toConversationResponse(conversation);
+    this.publishToParticipants(conversation, 'conversation:updated', payload);
     return payload;
   }
 
@@ -166,6 +215,20 @@ export class CommunicationService {
   async getConversationMessages(conversationId: string): Promise<MessageResponseDto[]> {
     const messages = await this.communicationRepository.getConversationMessages(conversationId);
     return messages.map((message) => this.toMessageResponse(message));
+  }
+
+  /** Emite un evento a la "sala personal" (`user:<id>`) de cada participante del chat. */
+  private publishToParticipants(conversation: Conversation, type: string, payload: unknown): void {
+    const userIds = new Set<string>([
+      conversation.customerId,
+      conversation.vendorId,
+      ...conversation.participants.map((participant) => participant.userId),
+    ]);
+    const occurredAt = new Date().toISOString();
+    for (const userId of userIds) {
+      if (!userId) continue;
+      this.realtimeHub.publish({ type, room: `user:${userId}`, payload, occurredAt });
+    }
   }
 
   private toConversationResponse(conversation: Conversation): ConversationResponseDto {
