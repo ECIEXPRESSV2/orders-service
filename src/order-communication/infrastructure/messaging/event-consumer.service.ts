@@ -97,6 +97,9 @@ export class EventConsumerService implements OnModuleInit {
       case CONSUMED_EVENTS.QR_EXPIRED:
         await this.ordersService.handleQrExpired(orderId);
         break;
+      case CONSUMED_EVENTS.RESERVATION_REJECTED:
+        await this.ordersService.handleStockReservationRejected(orderId, event.reason);
+        break;
       default:
         this.logger.warn(`Routing key no manejada: ${routingKey}`);
         return;

@@ -118,6 +118,27 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 export const canTransitionOrder = (fromStatus: OrderStatus, toStatus: OrderStatus): boolean =>
   ORDER_TRANSITIONS[fromStatus].includes(toStatus);
 
+/**
+ * Estados en los que `confirmReservation` ya corrió en products-service: el stock
+ * físico fue descontado (venta concretada) y `reservedStock` quedó en 0. Si una
+ * orden en uno de estos estados se cancela, products-service debe restituir el
+ * `stock` (no soltar una reserva que ya no existe).
+ */
+export const CONFIRMED_OR_LATER: ReadonlySet<OrderStatus> = new Set([
+  'CONFIRMED',
+  'IN_PREPARATION',
+  'READY_FOR_PICKUP',
+  'DELIVERED',
+]);
+
+/**
+ * Estados terminales en los que la venta no se concreta: products-service debe
+ * liberar/restituir cualquier stock reservado. CANCELLED y FAILED son equivalentes
+ * desde el punto de vista del inventario — solo difieren en por qué no se concretó
+ * la venta, no en qué hacer con el stock.
+ */
+export const STOCK_RELEASING_STATUSES: ReadonlySet<OrderStatus> = new Set(['CANCELLED', 'FAILED']);
+
 export const createHistoryEntry = (params: {
   orderId: string;
   fromStatus: OrderStatus | null;
