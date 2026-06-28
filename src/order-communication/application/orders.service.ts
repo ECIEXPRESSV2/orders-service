@@ -151,14 +151,8 @@ export class OrdersService {
       }
       throw error;
     }
-    // Conversación comprador-vendedor del pedido (RF-09). vendorId se aproxima
-    // con storeId hasta que identity exponga el staff de la tienda.
-    await this.communicationService.ensureConversationForOrder({
-      orderId: order.id,
-      storeId: order.storeId,
-      customerId: order.customerId,
-      vendorId: order.storeId,
-    });
+    // Conversación comprador-vendedor del pedido (RF-09).
+    await this.ensureConversation(order);
     // products-service reserva stock leyendo su proyección de carrito (cartId = orderId),
     // construida a partir de los eventos de carrito. En el path directo (sin checkout)
     // sembramos esa proyección aquí para que products pueda reservar stock igual que en
@@ -340,6 +334,10 @@ export class OrdersService {
       throw new ConflictException('El carrito aún no ha sido cotizado por products-service');
     }
 
+    // El carrito (DRAFT) no creó conversación; al confirmarse el pedido la creamos aquí
+    // para que el chat comprador-vendedor exista y el vendedor reciba el pedido (RF-09).
+    await this.ensureConversation(order);
+
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,
       buyerId: order.customerId,
@@ -412,7 +410,7 @@ export class OrdersService {
     });
   }
 
-  async getOrders(query?: { customerId?: string; status?: string }): Promise<OrderResponseDto[]> {
+  async getOrders(query?: { customerId?: string; storeId?: string; status?: string }): Promise<OrderResponseDto[]> {
     const orders = await this.orderRepository.findAll(query);
     return orders.map((order) => this.toResponse(order));
   }
@@ -651,6 +649,30 @@ export class OrdersService {
     this.realtimeHub.publish({
       type: 'order:status-updated',
       room: `order:${order.id}`,
+      payload: this.toResponse(order),
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Garantiza que exista la conversación comprador-vendedor del pedido (RF-09) y avisa
+   * al vendedor en tiempo real. Resuelve el `vendorId` real desde identity (primer staff
+   * activo de la tienda) y cae al `storeId` como aproximación si identity no lo expone.
+   * Idempotente: `ensureConversationForOrder` reutiliza la conversación si ya existe.
+   */
+  private async ensureConversation(order: Order): Promise<void> {
+    const vendorId = (await this.identity.getStoreVendorId(order.storeId)) ?? order.storeId;
+    await this.communicationService.ensureConversationForOrder({
+      orderId: order.id,
+      storeId: order.storeId,
+      customerId: order.customerId,
+      vendorId,
+    });
+    // Empuja el pedido a la sala personal del vendedor para que su panel de pedidos
+    // entrantes lo muestre en vivo sin recargar (el gateway une cada socket a `user:<id>`).
+    this.realtimeHub.publish({
+      type: 'order:new',
+      room: `user:${vendorId}`,
       payload: this.toResponse(order),
       occurredAt: new Date().toISOString(),
     });

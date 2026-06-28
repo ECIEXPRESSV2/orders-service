@@ -108,9 +108,10 @@ export class TypeOrmOrderRepository implements OrderRepository {
     return entity ? this.toDomain(entity) : null;
   }
 
-  async findAll(filters?: { customerId?: string; status?: string }): Promise<Order[]> {
+  async findAll(filters?: { customerId?: string; storeId?: string; status?: string }): Promise<Order[]> {
     const where: Record<string, unknown> = {};
     if (filters?.customerId) where.customerId = filters.customerId;
+    if (filters?.storeId) where.storeId = filters.storeId;
     if (filters?.status) where.status = filters.status;
     const entities = await this.orders.find({ where, order: { createdAt: 'DESC' } });
     return entities.map((entity) => this.toDomain(entity));

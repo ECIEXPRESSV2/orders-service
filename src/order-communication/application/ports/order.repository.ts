@@ -31,7 +31,7 @@ export interface OrderRepository {
   findById(id: string): Promise<Order | null>;
   /** Devuelve el pedido creado con esa clave de idempotencia, si existe. */
   findByIdempotencyKey(idempotencyKey: string): Promise<Order | null>;
-  findAll(filters?: { customerId?: string; status?: string }): Promise<Order[]>;
+  findAll(filters?: { customerId?: string; storeId?: string; status?: string }): Promise<Order[]>;
   findByCustomerId(customerId: string): Promise<Order[]>;
   getFrequentProducts(customerId?: string): Promise<FrequentProduct[]>;
 }
