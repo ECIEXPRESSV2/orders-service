@@ -33,4 +33,20 @@ export class IdentityHttpClient implements IdentityPort {
       return { available: true };
     }
   }
+
+  async getStoreVendorId(storeId: string): Promise<string | null> {
+    try {
+      const { data } = await axios.get<Array<{ userId?: string }>>(
+        `${this.baseUrl}/internal/stores/${storeId}/staff`,
+        { timeout: 6000 },
+      );
+      // El primer staff activo es el vendedor que atiende la conversación del pedido.
+      return data?.find((member) => member.userId)?.userId ?? null;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo resolver el vendedor de la tienda ${storeId} en identity: ${(error as Error).message}. Se usará el storeId como aproximación.`,
+      );
+      return null;
+    }
+  }
 }
