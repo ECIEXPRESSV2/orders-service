@@ -63,8 +63,12 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({ summary: 'List orders' })
-  findAll(@Query('customerId') customerId?: string, @Query('status') status?: string) {
-    return this.ordersService.getOrders({ customerId, status });
+  findAll(
+    @Query('customerId') customerId?: string,
+    @Query('storeId') storeId?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.ordersService.getOrders({ customerId, storeId, status });
   }
 
   @Get('history')

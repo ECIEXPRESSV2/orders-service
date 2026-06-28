@@ -43,7 +43,10 @@ class FakeEventPublisher implements EventPublisher {
   keys() { return this.events.map((e) => e.routingKey); }
 }
 
-const identity: IdentityPort = { getStoreAvailability: async () => ({ available: true }) };
+const identity: IdentityPort = {
+  getStoreAvailability: async () => ({ available: true }),
+  getStoreVendorId: async () => null,
+};
 const products: ProductsPort = { validateItems: async (_s, items) => items.map((i) => ({ ...i })) };
 // Doble mínimo de CommunicationService (solo se usa ensureConversationForOrder).
 const communication = { ensureConversationForOrder: async () => ({}) } as unknown as import('./communication.service').CommunicationService;
@@ -88,7 +91,7 @@ describe('OrdersService', () => {
   it('bloquea la creación si la tienda no está disponible', async () => {
     const blocked = new OrdersService(
       repo, events,
-      { getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }) },
+      { getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }), getStoreVendorId: async () => null },
       products, communication, new RealtimeHubService(), new StoreDirectoryService(),
     );
     await expect(blocked.createOrder(buildDto())).rejects.toBeInstanceOf(ConflictException);
