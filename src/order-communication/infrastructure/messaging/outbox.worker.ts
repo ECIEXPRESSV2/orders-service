@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository } from 'typeorm';
 import { OutboxEventEntity } from '../persistence/outbox-event.entity';
-import { RabbitMQService } from './rabbitmq.service';
+import { ServiceBusService } from './service-bus.service';
 
 const POLL_MS = 5_000;
 const BATCH_SIZE = 50;
@@ -21,7 +21,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectRepository(OutboxEventEntity)
     private readonly outbox: Repository<OutboxEventEntity>,
-    private readonly rabbit: RabbitMQService,
+    private readonly rabbit: ServiceBusService,
   ) {}
 
   onModuleInit(): void {

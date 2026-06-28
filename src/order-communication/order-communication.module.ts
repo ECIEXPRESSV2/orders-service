@@ -18,7 +18,7 @@ import { PRODUCTS_PORT } from './application/ports/products.port';
 import { IdentityHttpClient } from './infrastructure/clients/identity-http.client';
 import { ProductsMockClient } from './infrastructure/clients/products.mock.client';
 import { ProductsHttpClient } from './infrastructure/clients/products-http.client';
-import { RabbitMQService } from './infrastructure/messaging/rabbitmq.service';
+import { ServiceBusService } from './infrastructure/messaging/service-bus.service';
 import { OutboxService } from './infrastructure/messaging/outbox.service';
 import { OutboxWorker } from './infrastructure/messaging/outbox.worker';
 import { EventConsumerService } from './infrastructure/messaging/event-consumer.service';
@@ -57,7 +57,7 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     StoreDirectoryService,
     IdentityAuthClient,
     FirebaseAuthGuard,
-    RabbitMQService,
+    ServiceBusService,
     OutboxWorker,
     EventConsumerService,
     { provide: ORDER_REPOSITORY, useClass: TypeOrmOrderRepository },
