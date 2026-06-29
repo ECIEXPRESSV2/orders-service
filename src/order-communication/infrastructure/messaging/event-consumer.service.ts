@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrdersService } from '../../application/orders.service';
 import { ProcessedEventEntity } from '../persistence/processed-event.entity';
-import { RabbitMQService } from './rabbitmq.service';
+import { ServiceBusService } from './service-bus.service';
 import {
   CONSUMED_EVENTS,
   CONSUMED_ROUTING_KEYS,
@@ -24,7 +24,7 @@ export class EventConsumerService implements OnModuleInit {
   private readonly logger = new Logger(EventConsumerService.name);
 
   constructor(
-    private readonly rabbit: RabbitMQService,
+    private readonly rabbit: ServiceBusService,
     private readonly ordersService: OrdersService,
     @InjectRepository(ProcessedEventEntity)
     private readonly processed: Repository<ProcessedEventEntity>,

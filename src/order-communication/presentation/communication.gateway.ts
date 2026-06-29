@@ -13,7 +13,7 @@ import { RealtimeHubService } from '../../common/realtime-hub.service';
 import { CommunicationService } from '../application/communication.service';
 import { IdentityAuthClient } from '../../common/auth/identity-auth.client';
 
-@WebSocketGateway({ namespace: '/communication', cors: { origin: '*' } })
+@WebSocketGateway({ namespace: '/communication', path: '/orders/socket.io', cors: { origin: '*' } })
 export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnection {
   @WebSocketServer()
   server!: Server;
