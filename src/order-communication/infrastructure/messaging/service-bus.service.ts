@@ -57,7 +57,10 @@ export class ServiceBusService implements OnModuleInit, OnModuleDestroy {
 
   async connect(): Promise<void> {
     if (this.client) return;
-    this.client = new ServiceBusClient(this.fqns, new DefaultAzureCredential());
+    const connStr = process.env.SERVICE_BUS_CONNECTION_STRING;
+    this.client = connStr
+      ? new ServiceBusClient(connStr)
+      : new ServiceBusClient(this.fqns, new DefaultAzureCredential());
     this.sender = this.client.createSender(this.topic);
     this.logger.log(`Conectado a Service Bus; topic '${this.topic}' listo`);
   }
