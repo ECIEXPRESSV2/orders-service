@@ -81,11 +81,29 @@ describe('OrdersService', () => {
     expect(events.keys()).toContain('order.order.status_changed');
   });
 
-  it('crea un pedido en efectivo directamente en CONFIRMED con pickupExpiresAt y emite confirmed', async () => {
+  it('crea un pedido en efectivo en CREATED (espera la reserva de stock), sin confirmar aún', async () => {
     const order = await service.createOrder(buildDto({ paymentMethod: 'cash' }));
-    expect(order.status).toBe('CONFIRMED');
-    expect(order.pickupExpiresAt).toBeDefined();
+    // Option C: el efectivo NO se confirma al crear; espera reservation_confirmed.
+    expect(order.status).toBe('CREATED');
+    expect(events.keys()).toContain('order.order.created');
+    expect(events.keys()).not.toContain('order.order.confirmed');
+  });
+
+  it('confirma el pedido en efectivo al recibir reservation_confirmed (Option C)', async () => {
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' }));
+    events.events = [];
+    await service.handleStockReservationConfirmed(created.id);
+    const updated = await service.getOrderById(created.id);
+    expect(updated.status).toBe('CONFIRMED');
+    expect(updated.pickupExpiresAt).toBeDefined();
     expect(events.keys()).toContain('order.order.confirmed');
+  });
+
+  it('reservation_confirmed no afecta pedidos con pago digital (los confirma el pago)', async () => {
+    const created = await service.createOrder(buildDto()); // wallet → PENDING_PAYMENT
+    await service.handleStockReservationConfirmed(created.id);
+    const updated = await service.getOrderById(created.id);
+    expect(updated.status).toBe('PENDING_PAYMENT');
   });
 
   it('bloquea la creación si la tienda no está disponible', async () => {
@@ -123,7 +141,8 @@ describe('OrdersService', () => {
   });
 
   it('markDelivered transiciona a DELIVERED desde READY_FOR_PICKUP', async () => {
-    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CONFIRMED
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
     await service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' });
     await service.updateOrderStatus(created.id, { status: 'READY_FOR_PICKUP', actorType: 'vendor' });
     await service.markDelivered(created.id);
@@ -168,7 +187,8 @@ describe('OrdersService', () => {
   });
 
   it('UC-018: lanza conflicto si la transición fue pisada concurrentemente', async () => {
-    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CONFIRMED
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
     // Simula que otro proceso cambió el estado entre la lectura y el guardado.
     jest.spyOn(repo, 'saveTransition').mockResolvedValueOnce(null);
     await expect(

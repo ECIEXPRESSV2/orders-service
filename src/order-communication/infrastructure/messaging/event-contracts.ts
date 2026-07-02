@@ -39,6 +39,9 @@ export const CONSUMED_EVENTS = {
   USER_DEACTIVATED: 'identity.user.deactivated',
   // products-service: la reserva de stock para una línea de la orden falló.
   RESERVATION_REJECTED: 'product.inventory.reservation_rejected',
+  // products-service: se reservó stock para TODAS las líneas → los pedidos en efectivo
+  // pueden confirmarse (recién con stock realmente reservado).
+  RESERVATION_CONFIRMED: 'product.inventory.reservation_confirmed',
 } as const;
 
 export const CONSUMED_ROUTING_KEYS: string[] = Object.values(CONSUMED_EVENTS);
@@ -145,4 +148,10 @@ export interface IncomingReservationRejectedEvent {
   requestedQuantity: number;
   availableQuantity: number;
   reason: string;
+}
+
+/** Payload de `product.inventory.reservation_confirmed`: se reservó stock de todas las líneas. */
+export interface IncomingReservationConfirmedEvent {
+  orderId: string;
+  storeId: string;
 }

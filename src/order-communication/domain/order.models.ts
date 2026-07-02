@@ -99,8 +99,10 @@ export interface Order {
 }
 
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  // DRAFT es el carrito: acumula ítems hasta el checkout, que lo lleva a pago.
-  DRAFT: ['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'],
+  // DRAFT es el carrito: acumula ítems hasta el checkout, que lo lleva a pago (digital)
+  // o a CREATED (efectivo: espera la reserva de stock antes de confirmar — ver Option C
+  // en OrdersService.checkout / handleStockReservationConfirmed).
+  DRAFT: ['CREATED', 'PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'],
   CREATED: ['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'],
   PENDING_PAYMENT: ['PAYMENT_APPROVED', 'CANCELLED', 'FAILED'],
   PAYMENT_APPROVED: ['CONFIRMED', 'CANCELLED', 'FAILED'],
