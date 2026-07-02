@@ -180,15 +180,17 @@ export class OrdersService {
     });
     this.broadcast(order);
 
-    const previous = order.status;
-    if (dto.paymentMethod === 'cash') {
-      // Efectivo: la tienda confirma; no hay retención de billetera.
-      order = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Cash order confirmed by store');
-    } else {
-      // Pago digital: queda a la espera del resultado de financial-service.
+    // Efectivo (Option C): NO se confirma aquí. El pedido queda en CREATED hasta que
+    // products-service reserve el stock de TODAS las líneas y publique
+    // product.inventory.reservation_confirmed (lo maneja handleStockReservationConfirmed).
+    // Así, ante la última unidad y dos compradores simultáneos, solo quien realmente
+    // reserva el stock ve su pedido confirmado; el otro se cancela por reservation_rejected.
+    // Pago digital: queda a la espera del resultado de financial-service.
+    if (dto.paymentMethod !== 'cash') {
+      const previous = order.status;
       order = this.transitionTo(order, 'PENDING_PAYMENT', 'payment', 'Awaiting payment approval');
+      await this.finalize(previous, order);
     }
-    await this.finalize(previous, order);
 
     return this.toResponse(order);
   }
@@ -348,7 +350,8 @@ export class OrdersService {
 
     const previous = order.status;
     if (order.paymentMethod === 'cash') {
-      order = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Cash order confirmed by store');
+      // Option C: pasa a CREATED y espera reservation_confirmed antes de CONFIRMED.
+      order = this.transitionTo(order, 'CREATED', 'system', 'Awaiting stock reservation');
     } else {
       order = this.transitionTo(order, 'PENDING_PAYMENT', 'payment', 'Awaiting payment approval');
     }
@@ -555,6 +558,25 @@ export class OrdersService {
       reason ?? 'No había stock disponible para completar el pedido',
     );
     await this.finalize(order.status, cancelled);
+  }
+
+  /**
+   * product.inventory.reservation_confirmed -> CONFIRMED (solo pedidos en efectivo).
+   * products-service reservó stock para TODAS las líneas del pedido. Recién entonces un
+   * pedido en efectivo (que no pasa por pago digital) puede pasar a CONFIRMED: así, ante
+   * la última unidad y dos compradores simultáneos, solo quien realmente reservó el stock
+   * ve su pedido confirmado; el otro se cancela por reservation_rejected (Option C).
+   * Los pedidos con pago digital ignoran este evento: los confirma el pago
+   * (applyPaymentApproved); cuando llega ya no están en CREATED, así que el guard los salta.
+   */
+  async handleStockReservationConfirmed(orderId: string): Promise<void> {
+    const order = await this.orderRepository.findById(orderId);
+    if (!order) return;
+    if (order.paymentMethod !== 'cash') return;
+    // Solo desde CREATED: si ya avanzó (CONFIRMED, CANCELLED, ...) no hay nada que hacer.
+    if (order.status !== 'CREATED') return;
+    const confirmed = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Stock reserved; cash order confirmed');
+    await this.finalize(order.status, confirmed);
   }
 
   // ─── Eventos de identity-service ─────────────────────────────────
