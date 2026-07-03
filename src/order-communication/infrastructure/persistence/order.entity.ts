@@ -42,6 +42,14 @@ export class OrderEntity {
   @Column({ type: 'varchar', length: 32 })
   status!: OrderStatus;
 
+  /**
+   * products-service confirmó la reserva de stock de TODAS las líneas. La usa la
+   * confirmación de pedidos digitales (wallet/tarjeta): se confirman solo con pago
+   * aprobado Y stock reservado, sin depender del orden de llegada de ambos eventos.
+   */
+  @Column({ name: 'stock_reserved', type: 'boolean', default: false })
+  stockReserved!: boolean;
+
   @Column({ name: 'payment_method', type: 'varchar', length: 16 })
   paymentMethod!: OrderPaymentMethod;
 

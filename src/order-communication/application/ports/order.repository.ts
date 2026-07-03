@@ -20,6 +20,13 @@ export interface OrderRepository {
    */
   saveTransition(order: Order, expectedFromStatus: OrderStatus): Promise<Order | null>;
   /**
+   * Marca (de forma atómica e idempotente) que products-service confirmó la reserva
+   * de stock del pedido, sin alterar su estado. La usa la confirmación de pedidos
+   * digitales, que requiere pago aprobado Y stock reservado sin importar el orden de
+   * llegada de ambas señales. Devuelve el pedido recargado, o `null` si no existe.
+   */
+  markStockReserved(orderId: string): Promise<Order | null>;
+  /**
    * Reemplaza atómicamente las líneas de un pedido (carrito) y sus montos,
    * eliminando las líneas huérfanas. Devuelve el pedido recargado.
    */

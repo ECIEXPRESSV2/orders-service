@@ -27,6 +27,13 @@ class FakeOrderRepository implements OrderRepository {
     this.store.set(orderId, o);
     return JSON.parse(JSON.stringify(o));
   }
+  async markStockReserved(orderId: string) {
+    const o = this.store.get(orderId);
+    if (!o) return null;
+    o.stockReserved = true;
+    this.store.set(orderId, o);
+    return JSON.parse(JSON.stringify(o));
+  }
   async findById(id: string) { const o = this.store.get(id); return o ? JSON.parse(JSON.stringify(o)) : null; }
   async findByIdempotencyKey(key: string) {
     const o = [...this.store.values()].find((order) => order.idempotencyKey === key);
@@ -99,11 +106,13 @@ describe('OrdersService', () => {
     expect(events.keys()).toContain('order.order.confirmed');
   });
 
-  it('reservation_confirmed no afecta pedidos con pago digital (los confirma el pago)', async () => {
+  it('pago digital: reservation_confirmed marca la reserva pero NO confirma sin pago', async () => {
     const created = await service.createOrder(buildDto()); // wallet → PENDING_PAYMENT
     await service.handleStockReservationConfirmed(created.id);
     const updated = await service.getOrderById(created.id);
+    // Sigue esperando el pago: la reserva sola no confirma un pedido digital.
     expect(updated.status).toBe('PENDING_PAYMENT');
+    expect(events.keys()).not.toContain('order.order.confirmed');
   });
 
   it('bloquea la creación si la tienda no está disponible', async () => {
@@ -115,13 +124,37 @@ describe('OrdersService', () => {
     await expect(blocked.createOrder(buildDto())).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('applyPaymentApproved lleva el pedido a CONFIRMED y emite order.order.confirmed', async () => {
+  it('pago digital: applyPaymentApproved retiene en PAYMENT_APPROVED hasta que haya reserva', async () => {
     const created = await service.createOrder(buildDto());
     events.events = [];
     await service.applyPaymentApproved(created.id);
-    const updated = await service.getOrderById(created.id);
+    let updated = await service.getOrderById(created.id);
+    // El pago solo NO confirma: espera la reserva de stock (anti-sobreventa).
+    expect(updated.status).toBe('PAYMENT_APPROVED');
+    expect(events.keys()).not.toContain('order.order.confirmed');
+    // Llega la reserva → recién ahí confirma.
+    await service.handleStockReservationConfirmed(created.id);
+    updated = await service.getOrderById(created.id);
     expect(updated.status).toBe('CONFIRMED');
     expect(events.keys()).toContain('order.order.confirmed');
+  });
+
+  it('pago digital: confirma también si la reserva llega ANTES que el pago', async () => {
+    const created = await service.createOrder(buildDto());
+    await service.handleStockReservationConfirmed(created.id); // reserva primero
+    expect((await service.getOrderById(created.id)).status).toBe('PENDING_PAYMENT');
+    await service.applyPaymentApproved(created.id); // luego el pago
+    expect((await service.getOrderById(created.id)).status).toBe('CONFIRMED');
+  });
+
+  it('pago digital: sin reserva, un pago aprobado NO confirma; el rechazo cancela (anti-sobreventa)', async () => {
+    const created = await service.createOrder(buildDto());
+    await service.applyPaymentApproved(created.id); // pago aprobado, pero stock no reservado
+    expect((await service.getOrderById(created.id)).status).toBe('PAYMENT_APPROVED');
+    // El perdedor de la última unidad: products publica reservation_rejected.
+    await service.handleStockReservationRejected(created.id, 'sin stock');
+    const updated = await service.getOrderById(created.id);
+    expect(updated.status).toBe('CANCELLED'); // nunca llegó a CONFIRMED
   });
 
   it('applyPaymentFailed lleva el pedido a FAILED', async () => {
