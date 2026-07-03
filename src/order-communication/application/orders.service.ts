@@ -125,6 +125,7 @@ export class OrdersService {
       storeId: dto.storeId,
       storeName: dto.storeName,
       status: 'CREATED',
+      stockReserved: false,
       paymentMethod: dto.paymentMethod,
       deliveryMethod: dto.deliveryMethod,
       currency: dto.currency,
@@ -222,6 +223,7 @@ export class OrdersService {
       storeId: dto.storeId,
       storeName: dto.storeName,
       status: 'DRAFT',
+      stockReserved: false,
       paymentMethod: dto.paymentMethod,
       deliveryMethod: dto.deliveryMethod,
       currency,
@@ -500,14 +502,45 @@ export class OrdersService {
   // Order es el único dueño del estado: financial/fulfillment solo publican
   // eventos; aquí se deciden las transiciones.
 
-  /** financial.payment.processed -> PAYMENT_APPROVED -> CONFIRMED */
+  /**
+   * financial.payment.processed -> PAYMENT_APPROVED (pago retenido). NO confirma aquí:
+   * un pedido digital solo pasa a CONFIRMED cuando ADEMÁS products-service reservó el
+   * stock (reservation_confirmed). Así se cierra la sobreventa en pagos digitales —
+   * antes el pago confirmaba la orden sin mirar el inventario, y ante la última unidad
+   * (o varias) los dos compradores quedaban confirmados. La confirmación efectiva la
+   * dispara confirmIfPaidAndReserved, que también corre desde handleStockReservationConfirmed
+   * (los dos eventos llegan sin orden garantizado; ver stock_reserved en la orden).
+   */
   async applyPaymentApproved(orderId: string): Promise<void> {
     const order = await this.orderRepository.findById(orderId);
     if (!order || order.status !== 'PENDING_PAYMENT') return;
     const approved = this.transitionTo(order, 'PAYMENT_APPROVED', 'payment', 'Payment held by financial-service');
     await this.finalize(order.status, approved);
-    const confirmed = this.transitionTo(approved, 'CONFIRMED', 'payment', 'Payment captured');
-    await this.finalize(approved.status, confirmed);
+    // Pago listo: confirma solo si la reserva de stock ya llegó; si no, espera a
+    // reservation_confirmed (que reintentará esta misma comprobación).
+    await this.confirmIfPaidAndReserved(orderId);
+  }
+
+  /**
+   * Confirma un pedido DIGITAL solo cuando se cumplen AMBAS condiciones: pago aprobado
+   * (status = PAYMENT_APPROVED) y stock reservado (stockReserved = true). Idempotente y
+   * seguro ante concurrencia: relee el estado fresco (para ver la señal que publicó el
+   * otro handler) y la transición a CONFIRMED va con compare-and-set en finalize, de modo
+   * que si ambos handlers corren a la vez solo uno gana y el otro aborta sin efecto.
+   */
+  private async confirmIfPaidAndReserved(orderId: string): Promise<void> {
+    const order = await this.orderRepository.findById(orderId);
+    if (!order) return;
+    if (order.paymentMethod === 'cash') return; // efectivo confirma vía Option C, no por pago
+    if (order.status !== 'PAYMENT_APPROVED') return; // pago aún no aprobado, o ya avanzó
+    if (!order.stockReserved) return; // reserva de stock aún no confirmada
+    const confirmed = this.transitionTo(order, 'CONFIRMED', 'payment', 'Payment captured; stock reserved');
+    try {
+      await this.finalize(order.status, confirmed);
+    } catch (error) {
+      // El otro handler (pago/reserva) ganó la carrera y ya confirmó: no es un error.
+      if (!(error instanceof ConflictException)) throw error;
+    }
   }
 
   /** financial.payment.failed -> FAILED */
@@ -561,22 +594,33 @@ export class OrdersService {
   }
 
   /**
-   * product.inventory.reservation_confirmed -> CONFIRMED (solo pedidos en efectivo).
-   * products-service reservó stock para TODAS las líneas del pedido. Recién entonces un
-   * pedido en efectivo (que no pasa por pago digital) puede pasar a CONFIRMED: así, ante
-   * la última unidad y dos compradores simultáneos, solo quien realmente reservó el stock
-   * ve su pedido confirmado; el otro se cancela por reservation_rejected (Option C).
-   * Los pedidos con pago digital ignoran este evento: los confirma el pago
-   * (applyPaymentApproved); cuando llega ya no están en CREATED, así que el guard los salta.
+   * product.inventory.reservation_confirmed: products-service reservó stock para TODAS
+   * las líneas del pedido. Recién con stock realmente reservado un pedido puede confirmarse.
+   *
+   * - EFECTIVO (Option C): confirma directo (CREATED -> CONFIRMED). No hay pago digital,
+   *   así que la reserva es la única condición.
+   * - DIGITAL (wallet/tarjeta): NO confirma solo con la reserva; marca stockReserved y
+   *   confirma únicamente si el pago ya fue aprobado (confirmIfPaidAndReserved). Antes este
+   *   evento se ignoraba para pedidos digitales y el pago confirmaba solo → sobreventa con
+   *   la última unidad o con varias. Como reservation_confirmed y payment.processed llegan
+   *   sin orden garantizado, se persiste la señal para no depender de cuál llegue primero.
    */
   async handleStockReservationConfirmed(orderId: string): Promise<void> {
     const order = await this.orderRepository.findById(orderId);
     if (!order) return;
-    if (order.paymentMethod !== 'cash') return;
-    // Solo desde CREATED: si ya avanzó (CONFIRMED, CANCELLED, ...) no hay nada que hacer.
-    if (order.status !== 'CREATED') return;
-    const confirmed = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Stock reserved; cash order confirmed');
-    await this.finalize(order.status, confirmed);
+
+    if (order.paymentMethod === 'cash') {
+      // Solo desde CREATED: si ya avanzó (CONFIRMED, CANCELLED, ...) no hay nada que hacer.
+      if (order.status !== 'CREATED') return;
+      const confirmed = this.transitionTo(order, 'CONFIRMED', 'fulfillment', 'Stock reserved; cash order confirmed');
+      await this.finalize(order.status, confirmed);
+      return;
+    }
+
+    // Digital: persiste la reserva y confirma si el pago ya está aprobado; si no, espera
+    // a applyPaymentApproved (que reintentará confirmIfPaidAndReserved).
+    await this.orderRepository.markStockReserved(orderId);
+    await this.confirmIfPaidAndReserved(orderId);
   }
 
   // ─── Eventos de identity-service ─────────────────────────────────

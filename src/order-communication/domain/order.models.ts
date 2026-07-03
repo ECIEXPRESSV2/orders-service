@@ -74,6 +74,13 @@ export interface Order {
   storeId: string;
   storeName: string;
   status: OrderStatus;
+  /**
+   * products-service confirmó la reserva de stock de todas las líneas
+   * (`product.inventory.reservation_confirmed`). Gatea la confirmación de pedidos
+   * digitales (wallet/tarjeta): estos pasan a CONFIRMED solo con pago aprobado Y
+   * stock reservado. Efectivo (Option C) no la usa (confirma directo con la reserva).
+   */
+  stockReserved: boolean;
   paymentMethod: OrderPaymentMethod;
   deliveryMethod: OrderDeliveryMethod;
   currency: string;
