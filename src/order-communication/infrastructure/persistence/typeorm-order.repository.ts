@@ -98,6 +98,15 @@ export class TypeOrmOrderRepository implements OrderRepository {
     });
   }
 
+  async markStockReserved(orderId: string): Promise<Order | null> {
+    // UPDATE atómico e idempotente: marca la reserva sin tocar el status. No usa el
+    // compare-and-set de saveTransition (que es para transiciones de estado): la
+    // confirmación digital combina esta señal con el pago vía confirmIfPaidAndReserved.
+    await this.orders.update({ id: orderId }, { stockReserved: true });
+    const entity = await this.orders.findOne({ where: { id: orderId } });
+    return entity ? this.toDomain(entity) : null;
+  }
+
   async findById(id: string): Promise<Order | null> {
     const entity = await this.orders.findOne({ where: { id } });
     return entity ? this.toDomain(entity) : null;
@@ -149,6 +158,7 @@ export class TypeOrmOrderRepository implements OrderRepository {
     entity.storeId = order.storeId;
     entity.storeName = order.storeName;
     entity.status = order.status;
+    entity.stockReserved = order.stockReserved ?? false;
     entity.paymentMethod = order.paymentMethod;
     entity.deliveryMethod = order.deliveryMethod;
     entity.currency = order.currency;
@@ -245,6 +255,7 @@ export class TypeOrmOrderRepository implements OrderRepository {
       storeId: entity.storeId,
       storeName: entity.storeName,
       status: entity.status,
+      stockReserved: entity.stockReserved ?? false,
       paymentMethod: entity.paymentMethod,
       deliveryMethod: entity.deliveryMethod,
       currency: entity.currency,
