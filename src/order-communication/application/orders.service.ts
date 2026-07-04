@@ -303,6 +303,21 @@ export class OrdersService {
     const order = await this.orderRepository.findById(event.cartId);
     if (!order || order.status !== 'DRAFT') return;
 
+    // Guard de obsolescencia / orden. products cotiza de forma ASÍNCRONA y sus eventos
+    // `products.cart.priced` pueden llegar DESORDENADOS: el bus reintenta y, sobre todo, cada
+    // servicio corre con 0..3 réplicas compitiendo por una sola subscription, así que dos cambios
+    // seguidos del mismo carrito se cotizan en paralelo y responden en cualquier orden. Sin este
+    // guard, una cotización vieja que llega tarde REEMPLAZA el carrito con un snapshot anterior y
+    // borra los ítems agregados después, dejándolo permanentemente desincronizado (el front nunca
+    // habilita "Confirmar y pagar"). Solo aplicamos la cotización si corresponde EXACTAMENTE al
+    // carrito actual (mismos productos y cantidades); si no coincide, el usuario ya cambió el
+    // carrito y una cotización más nueva viene en camino, así que descartamos esta.
+    const currentQuantities = new Map(order.items.map((item) => [item.productId, item.quantity]));
+    const matchesCurrentCart =
+      currentQuantities.size === event.lines.length &&
+      event.lines.every((line) => currentQuantities.get(line.productId) === line.quantity);
+    if (!matchesCurrentCart) return;
+
     const items: OrderItem[] = event.lines.map((line) => {
       const existing = order.items.find((item) => item.productId === line.productId);
       return {
