@@ -5,6 +5,7 @@ import {
   CancelOrderDto,
   CreateDraftDto,
   CreateOrderDto,
+  QuoteCartDto,
   RateOrderDto,
   RequestReturnDto,
   UpdateOrderStatusDto,
@@ -47,6 +48,12 @@ export class OrdersController {
   @ApiOperation({ summary: 'Add/update/remove a cart line (quantity 0 removes)' })
   setCartItem(@Param('id') id: string, @Body() dto: UpsertCartItemDto) {
     return this.ordersService.setCartItem(id, dto);
+  }
+
+  @Post(':id/quote')
+  @ApiOperation({ summary: 'Quote a cart synchronously (price + stock) for the invoice/confirm step' })
+  quote(@Param('id') id: string, @Body() dto: QuoteCartDto) {
+    return this.ordersService.quoteCart(id, dto);
   }
 
   @Post(':id/checkout')
