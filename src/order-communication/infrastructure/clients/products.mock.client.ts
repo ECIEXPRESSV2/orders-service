@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import type { ProductItemInput, ProductsPort, ValidatedItem } from '../../application/ports/products.port';
+import type {
+  ProductItemInput,
+  ProductsPort,
+  QuotedItem,
+  ValidatedItem,
+} from '../../application/ports/products.port';
 
 /**
  * Implementación MOCK de ProductsPort. products-service todavía no expone un
@@ -25,5 +30,22 @@ export class ProductsMockClient implements ProductsPort {
       }
     }
     return items.map((item) => ({ ...item }));
+  }
+
+  async quoteItems(storeId: string, items: ProductItemInput[]): Promise<QuotedItem[]> {
+    this.logger.debug(`[MOCK] Cotizando ${items.length} ítem(s) de la tienda ${storeId}`);
+    // Sin catálogo real: confiamos en el precio del cliente y asumimos stock disponible.
+    return items.map((item) => ({
+      productId: item.productId,
+      name: item.name,
+      imageUrl: item.imageUrl,
+      sku: undefined,
+      listUnitPrice: item.unitPrice,
+      unitPrice: item.unitPrice,
+      quantity: item.quantity,
+      totalAmount: item.unitPrice * item.quantity,
+      available: item.quantity,
+      hasStock: true,
+    }));
   }
 }

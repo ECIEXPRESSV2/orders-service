@@ -62,6 +62,43 @@ export class CreateOrderItemDto {
   quantity!: number;
 }
 
+export class QuoteCartItemDto {
+  @ApiProperty({ example: '6f3a2b1c-0d4e-4f5a-9b6c-7d8e9f0a1b2c', description: 'UUID del producto' })
+  @IsString()
+  @IsNotEmpty()
+  productId!: string;
+
+  @ApiProperty({ example: 2 })
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+
+  @ApiPropertyOptional({ example: 'Mouse' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+}
+
+/**
+ * Cuerpo de `POST /orders/:id/quote`. El front envía las cantidades AUTORITATIVAS del carrito
+ * (su fuente de verdad) para que el paso "Confirmar" fije `order.items` a exactamente eso antes
+ * de cotizar — así el modal/factura siempre refleja el carrito, sin depender de la consistencia
+ * de las escrituras incrementales previas.
+ */
+export class QuoteCartDto {
+  @ApiProperty({ type: [QuoteCartItemDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => QuoteCartItemDto)
+  items!: QuoteCartItemDto[];
+}
+
 export class CreateOrderDto {
   @ApiPropertyOptional({ description: 'UUID del comprador. Se ignora si hay token: se toma del usuario autenticado.' })
   @IsOptional()

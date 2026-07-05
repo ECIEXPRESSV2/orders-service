@@ -8,7 +8,7 @@ import type { EventPublisher } from './ports/event-publisher';
 import { IDENTITY_PORT } from './ports/identity.port';
 import type { IdentityPort } from './ports/identity.port';
 import { PRODUCTS_PORT } from './ports/products.port';
-import type { ProductsPort } from './ports/products.port';
+import type { ProductsPort, QuotedItem } from './ports/products.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import type {
   IncomingCartPricedEvent,
@@ -25,6 +25,7 @@ import {
   CancelOrderDto,
   FrequentProductDto,
   OrderResponseDto,
+  QuoteCartDto,
   RateOrderDto,
   UpdateOrderStatusDto,
 } from './orders.dto';
@@ -41,6 +42,19 @@ import {
   STOCK_RELEASING_STATUSES,
   transitionOrder,
 } from '../domain/order.models';
+
+/** Resultado del paso "Confirmar": factura cotizada (precio con promos + stock por línea). */
+export interface CartQuoteResult {
+  cartId: string;
+  orderNumber: string;
+  storeName: string;
+  currency: string;
+  lines: QuotedItem[];
+  subtotalAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  hasStockIssues: boolean;
+}
 
 /** Estados desde los que un pedido admite solicitar una devolución. */
 const RETURNABLE_STATUSES: OrderStatus[] = [
@@ -298,46 +312,102 @@ export class OrdersService {
     return this.toResponse(updated);
   }
 
-  /** Aplica la cotización autoritativa de products-service al carrito DRAFT. */
-  async applyCartPriced(event: IncomingCartPricedEvent): Promise<void> {
-    const order = await this.orderRepository.findById(event.cartId);
-    if (!order || order.status !== 'DRAFT') return;
+  /**
+   * NO-OP intencional. El carrito ahora se cotiza de forma SÍNCRONA en `quoteCart` (paso
+   * "Confirmar", REST a products), así que orders ya NO aplica el `products.cart.priced`
+   * asíncrono al DRAFT.
+   *
+   * Por qué se desactivó: escribir aquí el array de items del pedido lo convertía en un SEGUNDO
+   * escritor concurrente junto a `setCartItem`. Ambos hacen lectura-modificación-escritura del
+   * array completo (`replaceItems`) sin bloqueo, así que un `cart.priced` que leía el pedido antes
+   * de un `setCartItem` y escribía después PISABA ese cambio (lost update), dejando `order.items`
+   * atrasado respecto al carrito del usuario. Con la cotización síncrona ya no hace falta este
+   * camino, y quitándolo `order.items` queda con un único escritor (`setCartItem`, serializado en
+   * el cliente) y deja de desincronizarse. products sigue manteniendo su proyección `cart_lines`
+   * con el mismo evento para reservar stock en el checkout.
+   */
+  async applyCartPriced(_event: IncomingCartPricedEvent): Promise<void> {
+    // Intencionalmente vacío: ver el docblock. La cotización del DRAFT es síncrona (quoteCart).
+    return;
+  }
 
-    // Guard de obsolescencia / orden. products cotiza de forma ASÍNCRONA y sus eventos
-    // `products.cart.priced` pueden llegar DESORDENADOS: el bus reintenta y, sobre todo, cada
-    // servicio corre con 0..3 réplicas compitiendo por una sola subscription, así que dos cambios
-    // seguidos del mismo carrito se cotizan en paralelo y responden en cualquier orden. Sin este
-    // guard, una cotización vieja que llega tarde REEMPLAZA el carrito con un snapshot anterior y
-    // borra los ítems agregados después, dejándolo permanentemente desincronizado (el front nunca
-    // habilita "Confirmar y pagar"). Solo aplicamos la cotización si corresponde EXACTAMENTE al
-    // carrito actual (mismos productos y cantidades); si no coincide, el usuario ya cambió el
-    // carrito y una cotización más nueva viene en camino, así que descartamos esta.
-    const currentQuantities = new Map(order.items.map((item) => [item.productId, item.quantity]));
-    const matchesCurrentCart =
-      currentQuantities.size === event.lines.length &&
-      event.lines.every((line) => currentQuantities.get(line.productId) === line.quantity);
-    if (!matchesCurrentCart) return;
+  /**
+   * Cotiza el carrito de forma SÍNCRONA para el paso "Confirmar" (antes de mostrar la factura
+   * y habilitar el pago). Precio autoritativo con promociones vía products (REST) y chequeo de
+   * stock por línea SIN cobrar ni reservar. Persiste los precios en el DRAFT para que el
+   * posterior `checkout` no dependa de la cotización asíncrona por eventos. El botón del front
+   * deja así de esperar `products.cart.priced`.
+   */
+  async quoteCart(id: string, dto: QuoteCartDto): Promise<CartQuoteResult> {
+    const order = await this.requireOrder(id);
+    if (order.status !== 'DRAFT') {
+      throw new ConflictException('El pedido no es un carrito en estado DRAFT');
+    }
+    if (!dto.items.length) {
+      throw new BadRequestException('El carrito está vacío');
+    }
 
-    const items: OrderItem[] = event.lines.map((line) => {
-      const existing = order.items.find((item) => item.productId === line.productId);
+    // Fuente de verdad: las cantidades que envía el front (lo que el usuario ve). NO confiamos en
+    // `order.items`, que pudo quedar atrás por escrituras incrementales perdidas/desordenadas.
+    // Cotizamos exactamente ese conjunto y luego lo FIJAMOS en el pedido, reparando cualquier
+    // drift previo, de modo que el modal/factura siempre coincida con el carrito.
+    const quoted = await this.products.quoteItems(
+      order.storeId,
+      dto.items.map((item) => ({
+        productId: item.productId,
+        name: item.name ?? 'Producto',
+        imageUrl: item.imageUrl,
+        unitPrice: 0, // products calcula el precio autoritativo; el del cliente se ignora
+        quantity: item.quantity,
+      })),
+    );
+
+    const subtotalAmount = quoted.reduce((sum, q) => sum + q.listUnitPrice * q.quantity, 0);
+    const totalAmount = quoted.reduce((sum, q) => sum + q.totalAmount, 0);
+    const discountAmount = Math.max(0, subtotalAmount - totalAmount);
+
+    // Persistimos el precio autoritativo Y el conjunto exacto de líneas en el DRAFT: así `checkout`
+    // ve totalAmount > 0 y `order.items` queda idéntico al carrito, sin depender de eventos.
+    const items: OrderItem[] = quoted.map((q) => {
+      const existing = order.items.find((it) => it.productId === q.productId);
       return {
         id: existing?.id ?? crypto.randomUUID(),
-        productId: line.productId,
-        name: line.name,
-        notes: existing?.notes, // products no maneja notas; preservamos la del comprador
-        imageUrl: line.imageUrl,
-        unitPrice: line.unitPrice,
-        quantity: line.quantity,
-        totalAmount: line.totalAmount,
+        productId: q.productId,
+        name: q.name,
+        notes: existing?.notes,
+        imageUrl: q.imageUrl,
+        unitPrice: q.unitPrice,
+        quantity: q.quantity,
+        totalAmount: q.totalAmount,
       };
     });
-
     const updated = await this.orderRepository.replaceItems(order.id, items, {
-      subtotalAmount: event.subtotalAmount,
-      discountAmount: event.discountAmount,
-      totalAmount: event.finalAmount,
+      subtotalAmount,
+      discountAmount,
+      totalAmount,
+    });
+    // Sincroniza la proyección de products (cart_lines) con el conjunto final, para que la reserva
+    // de stock en el checkout use exactamente estas líneas aunque alguna escritura incremental se
+    // hubiera perdido.
+    await this.events.publish(ORDER_EVENTS.CART_ITEM_CHANGED, {
+      cartId: order.id,
+      storeId: order.storeId,
+      currency: order.currency,
+      items: updated.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
     });
     this.broadcast(updated);
+
+    return {
+      cartId: order.id,
+      orderNumber: order.orderNumber,
+      storeName: order.storeName,
+      currency: order.currency,
+      lines: quoted,
+      subtotalAmount,
+      discountAmount,
+      totalAmount,
+      hasStockIssues: quoted.some((q) => !q.hasStock),
+    };
   }
 
   /** Confirma el carrito: lo pasa a pago y dispara el cobro en financial. */
