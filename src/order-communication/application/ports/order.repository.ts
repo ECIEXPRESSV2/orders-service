@@ -41,6 +41,7 @@ export interface OrderRepository {
   findAll(filters?: { customerId?: string; storeId?: string; status?: string }): Promise<Order[]>;
   findByCustomerId(customerId: string): Promise<Order[]>;
   getFrequentProducts(customerId?: string): Promise<FrequentProduct[]>;
+  delete(id: string): Promise<void>;
 }
 
 export const ORDER_REPOSITORY = Symbol('ORDER_REPOSITORY');

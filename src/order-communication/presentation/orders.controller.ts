@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from '../application/orders.service';
 import {
@@ -116,5 +116,12 @@ export class OrdersController {
   @ApiOperation({ summary: 'Rate order' })
   rate(@Param('id') id: string, @Body() dto: RateOrderDto, @CurrentUser() user: AuthUser) {
     return this.ordersService.rateOrder(id, { ...dto, customerId: user.userId });
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete order permanently (only DELIVERED, CANCELLED or FAILED)' })
+  remove(@Param('id') id: string) {
+    return this.ordersService.deleteOrder(id);
   }
 }

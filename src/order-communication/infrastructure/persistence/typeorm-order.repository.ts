@@ -149,6 +149,10 @@ export class TypeOrmOrderRepository implements OrderRepository {
     return [...accumulator.values()].sort((a, b) => b.totalOrders - a.totalOrders);
   }
 
+  async delete(id: string): Promise<void> {
+    await this.orders.delete(id);
+  }
+
   // ─── mappers ────────────────────────────────────────────────
   private toEntity(order: Order): OrderEntity {
     const entity = new OrderEntity();
