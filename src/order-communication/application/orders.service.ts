@@ -837,6 +837,15 @@ export class OrdersService {
     return order;
   }
 
+  /** Elimina físicamente un pedido (solo DELIVERED, CANCELLED o FAILED). */
+  async deleteOrder(id: string): Promise<void> {
+    const order = await this.requireOrder(id);
+    if (!['DELIVERED', 'CANCELLED', 'FAILED'].includes(order.status)) {
+      throw new ConflictException('Solo se pueden eliminar pedidos entregados, cancelados o fallidos');
+    }
+    await this.orderRepository.delete(id);
+  }
+
   private toResponse(order: Order): OrderResponseDto {
     return {
       id: order.id,
