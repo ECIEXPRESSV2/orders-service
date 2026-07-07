@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
 import { CommunicationService } from './communication.service';
 import { ORDER_REPOSITORY } from './ports/order.repository';
@@ -76,6 +76,8 @@ export class OrdersService {
     private readonly realtimeHub: RealtimeHubService,
     private readonly storeDirectory: StoreDirectoryService,
   ) {}
+
+  private readonly logger = new Logger(OrdersService.name);
 
   /**
    * Bloquea la operación si la proyección local de identity sabe que la tienda está
@@ -166,8 +168,8 @@ export class OrdersService {
       }
       throw error;
     }
-    // Conversación comprador-vendedor del pedido (RF-09).
-    await this.ensureConversation(order);
+    // Avisa al vendedor en vivo del pedido entrante (el chat, RF-09, se abre luego, al confirmarse).
+    await this.notifyVendorNewOrder(order);
     // products-service reserva stock leyendo su proyección de carrito (cartId = orderId),
     // construida a partir de los eventos de carrito. En el path directo (sin checkout)
     // sembramos esa proyección aquí para que products pueda reservar stock igual que en
@@ -423,9 +425,8 @@ export class OrdersService {
       throw new ConflictException('El carrito aún no ha sido cotizado por products-service');
     }
 
-    // El carrito (DRAFT) no creó conversación; al confirmarse el pedido la creamos aquí
-    // para que el chat comprador-vendedor exista y el vendedor reciba el pedido (RF-09).
-    await this.ensureConversation(order);
+    // Avisa al vendedor en vivo del pedido entrante (el chat, RF-09, se abre luego, al confirmarse).
+    await this.notifyVendorNewOrder(order);
 
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,
@@ -776,6 +777,15 @@ export class OrdersService {
         storeId: order.storeId,
         pickupExpiresAt: order.pickupExpiresAt,
       });
+      // Chat comprador-vendedor (RF-09): se abre justo aquí, no antes. Antes de CONFIRMED
+      // el pedido puede no llegar a concretarse (falla el pago, no hay stock) y no tiene
+      // sentido mostrarle un chat "en el limbo" a ninguno de los 2 lados.
+      await this.ensureConversation(order);
+    }
+    // El chat se cierra para siempre al entregar o cancelar (ninguno de los 2 lados debe
+    // volver a verlo). No-op si el pedido nunca llegó a CONFIRMED (nunca tuvo chat).
+    if ((order.status === 'DELIVERED' || order.status === 'CANCELLED') && previousStatus !== order.status) {
+      await this.communicationService.closeConversationForOrder(order.id);
     }
     // CANCELLED y FAILED son equivalentes para products-service: en ambos casos la
     // venta no se concreta y hay que liberar/restituir el stock reservado. Se
@@ -806,19 +816,12 @@ export class OrdersService {
   }
 
   /**
-   * Garantiza que exista la conversación comprador-vendedor del pedido (RF-09) y avisa
-   * al vendedor en tiempo real. Resuelve el `vendorId` real desde identity (primer staff
-   * activo de la tienda) y cae al `storeId` como aproximación si identity no lo expone.
-   * Idempotente: `ensureConversationForOrder` reutiliza la conversación si ya existe.
+   * Avisa al vendedor en tiempo real de un pedido entrante, apenas se crea (antes de
+   * confirmarse). Resuelve el `vendorId` real desde identity (primer staff activo de la
+   * tienda) y cae al `storeId` como aproximación si identity no lo expone.
    */
-  private async ensureConversation(order: Order): Promise<void> {
+  private async notifyVendorNewOrder(order: Order): Promise<void> {
     const vendorId = (await this.identity.getStoreVendorId(order.storeId)) ?? order.storeId;
-    await this.communicationService.ensureConversationForOrder({
-      orderId: order.id,
-      storeId: order.storeId,
-      customerId: order.customerId,
-      vendorId,
-    });
     // Empuja el pedido a la sala personal del vendedor para que su panel de pedidos
     // entrantes lo muestre en vivo sin recargar (el gateway une cada socket a `user:<id>`).
     this.realtimeHub.publish({
@@ -827,6 +830,31 @@ export class OrdersService {
       payload: this.toResponse(order),
       occurredAt: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Crea la conversación comprador-vendedor del pedido (RF-09) al confirmarse. Resuelve
+   * el `vendorId` real desde identity (primer staff activo de la tienda) y cae al
+   * `storeId` como aproximación si identity no lo expone. Idempotente:
+   * `ensureConversationForOrder` reutiliza la conversación si ya existe.
+   */
+  private async ensureConversation(order: Order): Promise<void> {
+    try {
+      const vendorId = (await this.identity.getStoreVendorId(order.storeId)) ?? order.storeId;
+      this.logger.log(`[chat] Creando/asegurando conversación para pedido ${order.id} (store=${order.storeId}, customer=${order.customerId}, vendor=${vendorId})`);
+      const conv = await this.communicationService.ensureConversationForOrder({
+        orderId: order.id,
+        storeId: order.storeId,
+        customerId: order.customerId,
+        vendorId,
+        storeName: order.storeName,
+      });
+      this.logger.log(`[chat] Conversación lista ${conv.id} para pedido ${order.id} (store="${conv.storeName ?? ''}", customer="${conv.customerName ?? ''}")`);
+    } catch (error) {
+      // El chat no debe tumbar la confirmación del pedido: si falla, se registra y el
+      // pedido queda confirmado igual. Antes este error se perdía en silencio.
+      this.logger.error(`[chat] No se pudo crear la conversación del pedido ${order.id}: ${(error as Error).message}`, (error as Error).stack);
+    }
   }
 
   private async requireOrder(id: string): Promise<Order> {

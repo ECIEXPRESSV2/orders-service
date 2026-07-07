@@ -101,8 +101,17 @@ export class OrderCommunicationGateway implements OnGatewayInit, OnGatewayConnec
   ) {
     const userId = (socket.data.userId as string) ?? body.userId ?? socket.id;
     socket.data.userId = userId;
-    socket.join(`conversation:${body.conversationId}`);
-    return this.communicationService.joinConversation(body.conversationId, userId, body.role ?? 'customer');
+    try {
+      // Verifica pertenencia (cliente del pedido o staff de la tienda) ANTES de unir el
+      // socket a la sala: si no pasa, nunca llega a recibir los mensajes de ese chat.
+      const result = await this.communicationService.joinConversation(body.conversationId, userId, body.role ?? 'customer');
+      socket.join(`conversation:${body.conversationId}`);
+      return result;
+    } catch (error) {
+      this.logger.warn(`WS conversation:joined rechazado (${userId} -> ${body.conversationId}): ${(error as Error).message}`);
+      socket.emit('error', { message: 'No tienes acceso a esta conversación' });
+      return { error: 'forbidden' };
+    }
   }
 
   @SubscribeMessage('order:subscribe')

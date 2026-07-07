@@ -27,6 +27,15 @@ export interface Conversation {
   participants: Participant[];
   lastMessageAt?: string;
   lastMessagePreview?: string;
+  /**
+   * Identidad visual del chat, tomada de identity-service (best-effort) al confirmarse
+   * el pedido. Es una foto fija: no se re-sincroniza si luego cambian el logo/avatar.
+   * El cliente ve nombre+logo de la tienda; el vendedor ve nombre+foto del cliente.
+   */
+  storeName?: string;
+  storeLogoUrl?: string;
+  customerName?: string;
+  customerAvatarUrl?: string;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
@@ -66,6 +75,10 @@ export const createConversation = (params: {
   storeId: string;
   customerId: string;
   vendorId: string;
+  storeName?: string;
+  storeLogoUrl?: string;
+  customerName?: string;
+  customerAvatarUrl?: string;
 }): Conversation => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -81,6 +94,10 @@ export const createConversation = (params: {
       createParticipant(id, params.customerId, 'customer'),
       createParticipant(id, params.vendorId, 'vendor'),
     ],
+    storeName: params.storeName,
+    storeLogoUrl: params.storeLogoUrl,
+    customerName: params.customerName,
+    customerAvatarUrl: params.customerAvatarUrl,
     createdAt: now,
     updatedAt: now,
   };

@@ -14,6 +14,7 @@ const baseOrder = (): Order => ({
   storeId: 's1',
   storeName: 'Tienda',
   status: 'CREATED',
+  stockReserved: false,
   paymentMethod: 'wallet',
   deliveryMethod: 'pickup',
   currency: 'COP',
