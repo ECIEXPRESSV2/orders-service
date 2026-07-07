@@ -14,15 +14,15 @@ export class MessagesController {
   constructor(private readonly communicationService: CommunicationService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List messages' })
-  findAll(@Query() query: MessageQueryDto) {
-    return this.communicationService.getMessages(query);
+  @ApiOperation({ summary: 'List messages (conversationId required; caller must belong to it)' })
+  findAll(@Query() query: MessageQueryDto, @CurrentUser() user: AuthUser) {
+    return this.communicationService.getMessages(query, user.userId);
   }
 
   @Get('conversation/:conversationId')
   @ApiOperation({ summary: 'Get messages by conversation' })
-  byConversation(@Param('conversationId') conversationId: string) {
-    return this.communicationService.getConversationMessages(conversationId);
+  byConversation(@Param('conversationId') conversationId: string, @CurrentUser() user: AuthUser) {
+    return this.communicationService.getConversationMessages(conversationId, user.userId);
   }
 
   @Post()

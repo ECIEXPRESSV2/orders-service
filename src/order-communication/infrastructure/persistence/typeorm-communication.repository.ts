@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import type {
   Conversation,
   ConversationStatus,
@@ -24,8 +24,14 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     private readonly messages: Repository<MessageEntity>,
   ) {}
 
+  /**
+   * Excluye siempre las conversaciones cerradas: un chat cerrado (pedido entregado o
+   * cancelado) no vuelve a ser visible para ningún lado por esta vía. La única forma de
+   * tocar un chat cerrado es `findConversationByOrderId` (uso interno de ciclo de vida:
+   * idempotencia de `ensureConversationForOrder` y de `closeConversationForOrder`).
+   */
   async findConversationById(id: string): Promise<Conversation | null> {
-    const entity = await this.conversations.findOne({ where: { id } });
+    const entity = await this.conversations.findOne({ where: { id, status: Not('closed') } });
     return entity ? this.toConversation(entity) : null;
   }
 
@@ -40,7 +46,9 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     if (filters?.customerId) where.customerId = filters.customerId;
     if (filters?.vendorId) where.vendorId = filters.vendorId;
     if (filters?.storeId) where.storeId = filters.storeId;
-    if (filters?.status) where.status = filters.status;
+    // 'closed' nunca es un filtro válido aquí: un chat cerrado no vuelve a listarse por
+    // ninguna vía normal, sin importar lo que pida el llamador.
+    where.status = filters?.status && filters.status !== 'closed' ? filters.status : Not('closed');
     const entities = await this.conversations.find({ where, order: { updatedAt: 'DESC' } });
     return entities.map((entity) => this.toConversation(entity));
   }
@@ -53,6 +61,10 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
       existing.status = conversation.status;
       existing.lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
       existing.lastMessagePreview = conversation.lastMessagePreview ?? null;
+      existing.storeName = conversation.storeName ?? existing.storeName;
+      existing.storeLogoUrl = conversation.storeLogoUrl ?? existing.storeLogoUrl;
+      existing.customerName = conversation.customerName ?? existing.customerName;
+      existing.customerAvatarUrl = conversation.customerAvatarUrl ?? existing.customerAvatarUrl;
       existing.updatedAt = new Date(conversation.updatedAt);
       existing.deletedAt = conversation.deletedAt ? new Date(conversation.deletedAt) : null;
       await this.conversations.save(existing);
@@ -202,6 +214,10 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
     entity.status = conversation.status;
     entity.lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
     entity.lastMessagePreview = conversation.lastMessagePreview ?? null;
+    entity.storeName = conversation.storeName ?? null;
+    entity.storeLogoUrl = conversation.storeLogoUrl ?? null;
+    entity.customerName = conversation.customerName ?? null;
+    entity.customerAvatarUrl = conversation.customerAvatarUrl ?? null;
     entity.createdAt = new Date(conversation.createdAt);
     entity.updatedAt = new Date(conversation.updatedAt);
     entity.deletedAt = conversation.deletedAt ? new Date(conversation.deletedAt) : null;
@@ -242,6 +258,10 @@ export class TypeOrmCommunicationRepository implements CommunicationRepository {
       })),
       lastMessageAt: iso(entity.lastMessageAt),
       lastMessagePreview: entity.lastMessagePreview ?? undefined,
+      storeName: entity.storeName ?? undefined,
+      storeLogoUrl: entity.storeLogoUrl ?? undefined,
+      customerName: entity.customerName ?? undefined,
+      customerAvatarUrl: entity.customerAvatarUrl ?? undefined,
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
       deletedAt: iso(entity.deletedAt),

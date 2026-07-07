@@ -34,6 +34,10 @@ export class ConversationResponseDto {
   }>;
   lastMessageAt?: string;
   lastMessagePreview?: string;
+  storeName?: string;
+  storeLogoUrl?: string;
+  customerName?: string;
+  customerAvatarUrl?: string;
   createdAt!: string;
   updatedAt!: string;
 }
@@ -110,31 +114,26 @@ export class TypingDto {
   typing!: boolean;
 }
 
+/**
+ * Filtros de listado de conversaciones. `customerId`/`vendorId` YA NO son filtros
+ * públicos: `CommunicationService.getConversations` siempre acota por el usuario
+ * autenticado (cliente = su propio userId; vendedor = staff verificado de `storeId`).
+ */
 export class ConversationQueryDto {
   @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   @IsOptional()
   @IsString()
   orderId?: string;
 
-  @ApiPropertyOptional({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  @IsOptional()
-  @IsString()
-  customerId?: string;
-
-  @ApiPropertyOptional({ example: 'c3d4e5f6-a7b8-9012-cdef-123456789012' })
-  @IsOptional()
-  @IsString()
-  vendorId?: string;
-
-  @ApiPropertyOptional({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901' })
+  @ApiPropertyOptional({ example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', description: 'Requiere que el usuario autenticado sea staff activo de esta tienda.' })
   @IsOptional()
   @IsString()
   storeId?: string;
 
-  @ApiPropertyOptional({ enum: ['active', 'archived', 'closed'] })
+  @ApiPropertyOptional({ enum: ['active', 'archived'], description: '`closed` no es un valor válido: un chat cerrado nunca se lista.' })
   @IsOptional()
-  @IsIn(['active', 'archived', 'closed'])
-  status?: 'active' | 'archived' | 'closed';
+  @IsIn(['active', 'archived'])
+  status?: 'active' | 'archived';
 }
 
 export class MessageQueryDto {

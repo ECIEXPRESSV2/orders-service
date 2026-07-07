@@ -14,15 +14,15 @@ export class ConversationsController {
   constructor(private readonly communicationService: CommunicationService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List conversations' })
-  findAll(@Query() query: ConversationQueryDto) {
-    return this.communicationService.getConversations(query);
+  @ApiOperation({ summary: 'List conversations (scoped to the authenticated user)' })
+  findAll(@Query() query: ConversationQueryDto, @CurrentUser() user: AuthUser) {
+    return this.communicationService.getConversations(query, user.userId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get conversation by id' })
-  findOne(@Param('id') id: string) {
-    return this.communicationService.getConversationById(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.communicationService.getConversationById(id, user.userId);
   }
 
   @Post(':id/read')
@@ -33,13 +33,13 @@ export class ConversationsController {
 
   @Patch(':id/archive')
   @ApiOperation({ summary: 'Archive a conversation' })
-  archive(@Param('id') id: string) {
-    return this.communicationService.setConversationStatus(id, 'archived');
+  archive(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.communicationService.setConversationStatus(id, 'archived', user.userId);
   }
 
   @Patch(':id/unarchive')
   @ApiOperation({ summary: 'Restore an archived conversation' })
-  unarchive(@Param('id') id: string) {
-    return this.communicationService.setConversationStatus(id, 'active');
+  unarchive(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.communicationService.setConversationStatus(id, 'active', user.userId);
   }
 }
