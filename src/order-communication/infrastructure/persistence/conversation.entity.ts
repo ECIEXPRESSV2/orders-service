@@ -35,6 +35,18 @@ export class ConversationEntity {
   @Column({ name: 'last_message_preview', type: 'text', nullable: true })
   lastMessagePreview?: string | null;
 
+  @Column({ name: 'store_name', type: 'varchar', length: 200, nullable: true })
+  storeName?: string | null;
+
+  @Column({ name: 'store_logo_url', type: 'text', nullable: true })
+  storeLogoUrl?: string | null;
+
+  @Column({ name: 'customer_name', type: 'varchar', length: 200, nullable: true })
+  customerName?: string | null;
+
+  @Column({ name: 'customer_avatar_url', type: 'text', nullable: true })
+  customerAvatarUrl?: string | null;
+
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

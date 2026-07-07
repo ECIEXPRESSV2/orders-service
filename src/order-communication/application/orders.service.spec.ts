@@ -42,6 +42,7 @@ class FakeOrderRepository implements OrderRepository {
   async findAll() { return [...this.store.values()]; }
   async findByCustomerId(customerId: string) { return [...this.store.values()].filter((o) => o.customerId === customerId); }
   async getFrequentProducts() { return []; }
+  async delete(id: string) { this.store.delete(id); }
 }
 
 class FakeEventPublisher implements EventPublisher {
@@ -53,10 +54,37 @@ class FakeEventPublisher implements EventPublisher {
 const identity: IdentityPort = {
   getStoreAvailability: async () => ({ available: true }),
   getStoreVendorId: async () => null,
+  isStoreStaff: async () => false,
+  getStoreDisplay: async () => null,
+  getUserDisplay: async () => null,
 };
-const products: ProductsPort = { validateItems: async (_s, items) => items.map((i) => ({ ...i })) };
-// Doble mínimo de CommunicationService (solo se usa ensureConversationForOrder).
-const communication = { ensureConversationForOrder: async () => ({}) } as unknown as import('./communication.service').CommunicationService;
+const products: ProductsPort = {
+  validateItems: async (_s, items) => items.map((i) => ({ ...i })),
+  quoteItems: async (_s, items) => items.map((i) => ({
+    productId: i.productId,
+    name: i.name,
+    imageUrl: i.imageUrl,
+    listUnitPrice: i.unitPrice,
+    unitPrice: i.unitPrice,
+    quantity: i.quantity,
+    totalAmount: i.unitPrice * i.quantity,
+    available: i.quantity,
+    hasStock: true,
+  })),
+};
+// Doble mínimo de CommunicationService (solo se usan ensureConversationForOrder / closeConversationForOrder),
+// con registro de llamadas para verificar CUÁNDO se abre/cierra el chat del pedido.
+class FakeCommunicationService {
+  ensuredOrderIds: string[] = [];
+  closedOrderIds: string[] = [];
+  async ensureConversationForOrder(params: { orderId: string }) {
+    this.ensuredOrderIds.push(params.orderId);
+    return {};
+  }
+  async closeConversationForOrder(orderId: string) {
+    this.closedOrderIds.push(orderId);
+  }
+}
 
 const buildDto = (overrides: Partial<CreateOrderDto> = {}): CreateOrderDto => ({
   customerId: 'cust-1',
@@ -72,12 +100,18 @@ const buildDto = (overrides: Partial<CreateOrderDto> = {}): CreateOrderDto => ({
 describe('OrdersService', () => {
   let repo: FakeOrderRepository;
   let events: FakeEventPublisher;
+  let communication: FakeCommunicationService;
   let service: OrdersService;
 
   beforeEach(() => {
     repo = new FakeOrderRepository();
     events = new FakeEventPublisher();
-    service = new OrdersService(repo, events, identity, products, communication, new RealtimeHubService(), new StoreDirectoryService());
+    communication = new FakeCommunicationService();
+    service = new OrdersService(
+      repo, events, identity, products,
+      communication as unknown as import('./communication.service').CommunicationService,
+      new RealtimeHubService(), new StoreDirectoryService(),
+    );
   });
 
   it('crea un pedido wallet en PENDING_PAYMENT y emite order.order.created', async () => {
@@ -98,12 +132,15 @@ describe('OrdersService', () => {
 
   it('confirma el pedido en efectivo al recibir reservation_confirmed (Option C)', async () => {
     const created = await service.createOrder(buildDto({ paymentMethod: 'cash' }));
+    // El chat (RF-09) no existe todavía en CREATED: se abre recién al confirmarse.
+    expect(communication.ensuredOrderIds).not.toContain(created.id);
     events.events = [];
     await service.handleStockReservationConfirmed(created.id);
     const updated = await service.getOrderById(created.id);
     expect(updated.status).toBe('CONFIRMED');
     expect(updated.pickupExpiresAt).toBeDefined();
     expect(events.keys()).toContain('order.order.confirmed');
+    expect(communication.ensuredOrderIds).toContain(created.id);
   });
 
   it('pago digital: reservation_confirmed marca la reserva pero NO confirma sin pago', async () => {
@@ -118,8 +155,16 @@ describe('OrdersService', () => {
   it('bloquea la creación si la tienda no está disponible', async () => {
     const blocked = new OrdersService(
       repo, events,
-      { getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }), getStoreVendorId: async () => null },
-      products, communication, new RealtimeHubService(), new StoreDirectoryService(),
+      {
+        getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }),
+        getStoreVendorId: async () => null,
+        isStoreStaff: async () => false,
+        getStoreDisplay: async () => null,
+        getUserDisplay: async () => null,
+      },
+      products,
+      new FakeCommunicationService() as unknown as import('./communication.service').CommunicationService,
+      new RealtimeHubService(), new StoreDirectoryService(),
     );
     await expect(blocked.createOrder(buildDto())).rejects.toBeInstanceOf(ConflictException);
   });
@@ -173,14 +218,34 @@ describe('OrdersService', () => {
     expect(events.keys()).toContain('order.order.cancelled');
   });
 
-  it('markDelivered transiciona a DELIVERED desde READY_FOR_PICKUP', async () => {
+  it('markDelivered transiciona a DELIVERED desde READY_FOR_PICKUP y cierra el chat', async () => {
     const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
-    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED (abre el chat)
+    expect(communication.closedOrderIds).not.toContain(created.id);
     await service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' });
     await service.updateOrderStatus(created.id, { status: 'READY_FOR_PICKUP', actorType: 'vendor' });
     await service.markDelivered(created.id);
     const updated = await service.getOrderById(created.id);
     expect(updated.status).toBe('DELIVERED');
+    // Al entregarse, el chat se cierra para siempre (ninguno de los 2 lados vuelve a verlo).
+    expect(communication.closedOrderIds).toContain(created.id);
+  });
+
+  it('cancelOrder cierra el chat si el pedido ya había sido confirmado', async () => {
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED (abre el chat)
+    await service.cancelOrder(created.id, {});
+    const updated = await service.getOrderById(created.id);
+    expect(updated.status).toBe('CANCELLED');
+    expect(communication.closedOrderIds).toContain(created.id);
+  });
+
+  it('cancelOrder antes de CONFIRMED nunca llegó a abrir el chat (no hubo ensureConversationForOrder)', async () => {
+    const created = await service.createOrder(buildDto()); // wallet → PENDING_PAYMENT, sin chat
+    await service.cancelOrder(created.id, {});
+    expect(communication.ensuredOrderIds).not.toContain(created.id);
+    // orders.service SÍ llama a closeConversationForOrder (no-op si no hay conversación:
+    // esa idempotencia la garantiza CommunicationService, cubierto en su propio spec).
   });
 
   it('no permite calificar un pedido que no fue entregado', async () => {
