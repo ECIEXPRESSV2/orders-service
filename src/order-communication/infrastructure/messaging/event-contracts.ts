@@ -51,7 +51,14 @@ export interface OrderCreatedPayload {
   orderId: string;
   buyerId: string;
   storeId: string;
-  totalAmount: number; // centavos COP
+  /** Valor de los productos (base del pedido), centavos COP. Base para la comisión de plataforma. */
+  orderAmount: number;
+  /** Recargo de hora pico que paga el comprador, centavos COP (0 si no aplica). Fijado en el checkout. */
+  peakFeeAmount: number;
+  /** true si el checkout cayó en hora pico. */
+  isPeakHour: boolean;
+  /** Total a cobrar = orderAmount + peakFeeAmount, centavos COP. Es el precio de la orden. */
+  totalAmount: number;
   paymentMethod: string;
 }
 
