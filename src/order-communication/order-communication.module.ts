@@ -15,9 +15,11 @@ import { COMMUNICATION_REPOSITORY } from './application/ports/communication.repo
 import { EVENT_PUBLISHER } from './application/ports/event-publisher';
 import { IDENTITY_PORT } from './application/ports/identity.port';
 import { PRODUCTS_PORT } from './application/ports/products.port';
+import { FINANCIAL_PORT } from './application/ports/financial.port';
 import { IdentityHttpClient } from './infrastructure/clients/identity-http.client';
 import { ProductsMockClient } from './infrastructure/clients/products.mock.client';
 import { ProductsHttpClient } from './infrastructure/clients/products-http.client';
+import { FinancialHttpClient } from './infrastructure/clients/financial-http.client';
 import { ServiceBusService } from './infrastructure/messaging/service-bus.service';
 import { OutboxService } from './infrastructure/messaging/outbox.service';
 import { OutboxWorker } from './infrastructure/messaging/outbox.worker';
@@ -71,6 +73,7 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
       provide: PRODUCTS_PORT,
       useClass: process.env.USE_PRODUCTS_MOCK === 'true' ? ProductsMockClient : ProductsHttpClient,
     },
+    { provide: FINANCIAL_PORT, useClass: FinancialHttpClient },
   ],
   exports: [OrdersService, CommunicationService, RealtimeHubService, IdentityAuthClient],
 })

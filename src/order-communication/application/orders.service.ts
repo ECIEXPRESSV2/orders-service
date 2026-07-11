@@ -9,6 +9,8 @@ import { IDENTITY_PORT } from './ports/identity.port';
 import type { IdentityPort } from './ports/identity.port';
 import { PRODUCTS_PORT } from './ports/products.port';
 import type { ProductsPort, QuotedItem } from './ports/products.port';
+import { FINANCIAL_PORT } from './ports/financial.port';
+import type { FinancialPort } from './ports/financial.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import type {
   IncomingCartPricedEvent,
@@ -52,6 +54,11 @@ export interface CartQuoteResult {
   lines: QuotedItem[];
   subtotalAmount: number;
   discountAmount: number;
+  /** Recargo de hora pico que cobra la tienda al comprador, en centavos COP (0 si no aplica). */
+  peakFeeAmount: number;
+  /** true si al cotizar la tienda está en su franja de hora pico. */
+  isPeakHour: boolean;
+  /** Total a pagar = subtotal − descuento + recargo de hora pico. */
   totalAmount: number;
   hasStockIssues: boolean;
 }
@@ -72,6 +79,7 @@ export class OrdersService {
     @Inject(EVENT_PUBLISHER) private readonly events: EventPublisher,
     @Inject(IDENTITY_PORT) private readonly identity: IdentityPort,
     @Inject(PRODUCTS_PORT) private readonly products: ProductsPort,
+    @Inject(FINANCIAL_PORT) private readonly financial: FinancialPort,
     private readonly communicationService: CommunicationService,
     private readonly realtimeHub: RealtimeHubService,
     private readonly storeDirectory: StoreDirectoryService,
@@ -187,12 +195,22 @@ export class OrdersService {
       currency: order.currency,
       items: order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
     });
+    // Fija el recargo de hora pico y lo suma al precio de la orden (igual que en el checkout
+    // del carrito): financial cobra EXACTAMENTE este total sin recalcular el pico.
+    const orderAmount = order.totalAmount; // base: valor de los productos
+    const commission = await this.financial.getCommission(order.storeId, orderAmount);
+    const grandTotal = orderAmount + commission.peakFeeAmount;
+    order = { ...order, totalAmount: grandTotal };
+
     // Evento de creación: financial retiene el pago, products reserva stock, notifications avisa.
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,
       buyerId: order.customerId,
       storeId: order.storeId,
-      totalAmount: order.totalAmount,
+      orderAmount,
+      peakFeeAmount: commission.peakFeeAmount,
+      isPeakHour: commission.isPeakHour,
+      totalAmount: grandTotal,
       paymentMethod: order.paymentMethod,
     });
     this.broadcast(order);
@@ -365,8 +383,16 @@ export class OrdersService {
     );
 
     const subtotalAmount = quoted.reduce((sum, q) => sum + q.listUnitPrice * q.quantity, 0);
-    const totalAmount = quoted.reduce((sum, q) => sum + q.totalAmount, 0);
-    const discountAmount = Math.max(0, subtotalAmount - totalAmount);
+    // Valor de los productos ya con promoción (base del pedido). Es lo que se persiste y lo que
+    // financial recibe como `orderAmount` al cobrar; el recargo de hora pico se calcula SOBRE él.
+    const productsTotal = quoted.reduce((sum, q) => sum + q.totalAmount, 0);
+    const discountAmount = Math.max(0, subtotalAmount - productsTotal);
+
+    // Comisión de hora pico (financial es la fuente de verdad). Se suma SOLO al total mostrado en
+    // la factura; NO se persiste en el pedido, porque financial la vuelve a calcular sobre
+    // `orderAmount` al procesar `order.created` y, si la persistiéramos, se cobraría dos veces.
+    const commission = await this.financial.getCommission(order.storeId, productsTotal);
+    const totalAmount = productsTotal + commission.peakFeeAmount;
 
     // Persistimos el precio autoritativo Y el conjunto exacto de líneas en el DRAFT: así `checkout`
     // ve totalAmount > 0 y `order.items` queda idéntico al carrito, sin depender de eventos.
@@ -386,7 +412,9 @@ export class OrdersService {
     const updated = await this.orderRepository.replaceItems(order.id, items, {
       subtotalAmount,
       discountAmount,
-      totalAmount,
+      // Se persiste el valor de los productos (SIN recargo de hora pico): es la base que
+      // financial cobra y sobre la que recalcula el recargo. Ver comentario arriba.
+      totalAmount: productsTotal,
     });
     // Sincroniza la proyección de products (cart_lines) con el conjunto final, para que la reserva
     // de stock en el checkout use exactamente estas líneas aunque alguna escritura incremental se
@@ -407,6 +435,8 @@ export class OrdersService {
       lines: quoted,
       subtotalAmount,
       discountAmount,
+      peakFeeAmount: commission.peakFeeAmount,
+      isPeakHour: commission.isPeakHour,
       totalAmount,
       hasStockIssues: quoted.some((q) => !q.hasStock),
     };
@@ -428,13 +458,27 @@ export class OrdersService {
     // Avisa al vendedor en vivo del pedido entrante (el chat, RF-09, se abre luego, al confirmarse).
     await this.notifyVendorNewOrder(order);
 
+    // Fija el recargo de hora pico AHORA (financial es la fuente de verdad) y lo suma al precio
+    // de la orden: lo que se cobra y lo que queda registrado incluye la comisión de hora pico,
+    // no solo el valor de los productos. Se envía el desglose para que financial cobre EXACTAMENTE
+    // este total sin recalcular el pico (el precio que vio el comprador == el precio cobrado).
+    const orderAmount = order.totalAmount; // base: valor de los productos (ya con promociones)
+    const commission = await this.financial.getCommission(order.storeId, orderAmount);
+    const grandTotal = orderAmount + commission.peakFeeAmount;
+
     await this.events.publish(ORDER_EVENTS.CREATED, {
       orderId: order.id,
       buyerId: order.customerId,
       storeId: order.storeId,
-      totalAmount: order.totalAmount,
+      orderAmount,
+      peakFeeAmount: commission.peakFeeAmount,
+      isPeakHour: commission.isPeakHour,
+      totalAmount: grandTotal,
       paymentMethod: order.paymentMethod,
     });
+
+    // El precio de la orden pasa a ser el total con hora pico (se persiste al finalizar).
+    order = { ...order, totalAmount: grandTotal };
 
     const previous = order.status;
     if (order.paymentMethod === 'cash') {
