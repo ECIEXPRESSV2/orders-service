@@ -6,6 +6,7 @@ import type { OrderRepository } from './ports/order.repository';
 import type { EventPublisher } from './ports/event-publisher';
 import type { IdentityPort } from './ports/identity.port';
 import type { ProductsPort } from './ports/products.port';
+import type { FinancialPort } from './ports/financial.port';
 import type { Order, OrderStatus } from '../domain/order.models';
 import { CreateOrderDto } from './orders.dto';
 
@@ -72,6 +73,10 @@ const products: ProductsPort = {
     hasStock: true,
   })),
 };
+// Sin recargo de hora pico por defecto: mantiene los totales de los tests (= valor de productos).
+const financial: FinancialPort = {
+  getCommission: async () => ({ peakFeeAmount: 0, isPeakHour: false, peakFeePercent: 0 }),
+};
 // Doble mínimo de CommunicationService (solo se usan ensureConversationForOrder / closeConversationForOrder),
 // con registro de llamadas para verificar CUÁNDO se abre/cierra el chat del pedido.
 class FakeCommunicationService {
@@ -108,7 +113,7 @@ describe('OrdersService', () => {
     events = new FakeEventPublisher();
     communication = new FakeCommunicationService();
     service = new OrdersService(
-      repo, events, identity, products,
+      repo, events, identity, products, financial,
       communication as unknown as import('./communication.service').CommunicationService,
       new RealtimeHubService(), new StoreDirectoryService(),
     );
@@ -163,6 +168,7 @@ describe('OrdersService', () => {
         getUserDisplay: async () => null,
       },
       products,
+      financial,
       new FakeCommunicationService() as unknown as import('./communication.service').CommunicationService,
       new RealtimeHubService(), new StoreDirectoryService(),
     );
