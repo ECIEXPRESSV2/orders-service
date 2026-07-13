@@ -68,7 +68,7 @@ const RETURNABLE_STATUSES: OrderStatus[] = [
   'CONFIRMED', 'READY_FOR_PICKUP', 'DELIVERED', 'PARTIALLY_RETURNED',
 ];
 
-const PICKUP_WINDOW_MS = Number(process.env.PICKUP_WINDOW_HOURS ?? 2) * 3_600_000;
+const PICKUP_WINDOW_MS = Number(process.env.PICKUP_WINDOW_HOURS ?? 0.5) * 3_600_000;
 /** Minutos estimados de preparación, usados para el ETA cuando no hay hora programada. */
 const PREP_TIME_MINUTES = Number(process.env.PREP_TIME_MINUTES ?? 15);
 
@@ -443,7 +443,7 @@ export class OrdersService {
   }
 
   /** Confirma el carrito: lo pasa a pago y dispara el cobro en financial. */
-  async checkout(id: string): Promise<OrderResponseDto> {
+  async checkout(id: string, scheduledPickupAt?: string, closeTime?: string): Promise<OrderResponseDto> {
     let order = await this.requireOrder(id);
     if (order.status !== 'DRAFT') {
       throw new ConflictException('El pedido no es un carrito en estado DRAFT');
@@ -453,6 +453,11 @@ export class OrdersService {
     }
     if (order.totalAmount <= 0) {
       throw new ConflictException('El carrito aún no ha sido cotizado por products-service');
+    }
+
+    // Si el checkout incluye una hora programada, la guardamos en la orden.
+    if (scheduledPickupAt) {
+      order = { ...order, scheduledPickupAt };
     }
 
     // Avisa al vendedor en vivo del pedido entrante (el chat, RF-09, se abre luego, al confirmarse).
@@ -793,8 +798,18 @@ export class OrdersService {
     actorId?: string,
   ): Order {
     let updated = transitionOrder(order, { toStatus, actorType, actorId, reason });
-    if (toStatus === 'CONFIRMED' && !updated.pickupExpiresAt) {
-      updated = { ...updated, pickupExpiresAt: new Date(Date.now() + PICKUP_WINDOW_MS).toISOString() };
+    if (toStatus === 'READY_FOR_PICKUP') {
+      const nowMs = Date.now();
+      if (updated.scheduledPickupAt) {
+        const scheduledMs = new Date(updated.scheduledPickupAt).getTime();
+        if (scheduledMs > nowMs) {
+          updated = { ...updated, pickupExpiresAt: new Date(scheduledMs + 10 * 60 * 1000).toISOString() };
+        } else {
+          updated = { ...updated, pickupExpiresAt: new Date(nowMs + PICKUP_WINDOW_MS).toISOString() };
+        }
+      } else {
+        updated = { ...updated, pickupExpiresAt: new Date(nowMs + PICKUP_WINDOW_MS).toISOString() };
+      }
     }
     return updated;
   }
@@ -820,12 +835,21 @@ export class OrdersService {
         orderNumber: order.orderNumber,
         buyerId: order.customerId,
         storeId: order.storeId,
-        pickupExpiresAt: order.pickupExpiresAt,
       });
       // Chat comprador-vendedor (RF-09): se abre justo aquí, no antes. Antes de CONFIRMED
       // el pedido puede no llegar a concretarse (falla el pago, no hay stock) y no tiene
       // sentido mostrarle un chat "en el limbo" a ninguno de los 2 lados.
       await this.ensureConversation(order);
+    }
+    if (order.status === 'READY_FOR_PICKUP' && previousStatus !== 'READY_FOR_PICKUP') {
+      await this.events.publish(ORDER_EVENTS.READY_FOR_PICKUP, {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        buyerId: order.customerId,
+        storeId: order.storeId,
+        scheduledPickupAt: order.scheduledPickupAt,
+        pickupExpiresAt: order.pickupExpiresAt,
+      });
     }
     // El chat se cierra para siempre al entregar o cancelar (ninguno de los 2 lados debe
     // volver a verlo). No-op si el pedido nunca llegó a CONFIRMED (nunca tuvo chat).
