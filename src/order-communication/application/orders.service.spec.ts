@@ -143,7 +143,9 @@ describe('OrdersService', () => {
     await service.handleStockReservationConfirmed(created.id);
     const updated = await service.getOrderById(created.id);
     expect(updated.status).toBe('CONFIRMED');
-    expect(updated.pickupExpiresAt).toBeDefined();
+    // pickupExpiresAt ya NO se calcula al confirmar: se calcula al pasar a
+    // READY_FOR_PICKUP (cuando la tienda marca el pedido listo para recoger).
+    expect(updated.pickupExpiresAt).toBeUndefined();
     expect(events.keys()).toContain('order.order.confirmed');
     expect(communication.ensuredOrderIds).toContain(created.id);
   });
