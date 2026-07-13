@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from '../application/orders.service';
 import {
   CancelOrderDto,
+  CheckoutDto,
   CreateDraftDto,
   CreateOrderDto,
   QuoteCartDto,
@@ -58,8 +59,8 @@ export class OrdersController {
 
   @Post(':id/checkout')
   @ApiOperation({ summary: 'Check out a cart: move to payment and charge wallet' })
-  checkout(@Param('id') id: string) {
-    return this.ordersService.checkout(id);
+  checkout(@Param('id') id: string, @Body() dto: CheckoutDto) {
+    return this.ordersService.checkout(id, dto.scheduledPickupAt, dto.closeTime);
   }
 
   @Post(':id/returns')

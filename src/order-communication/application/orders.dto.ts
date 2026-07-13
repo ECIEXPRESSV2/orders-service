@@ -12,6 +12,7 @@ import {
   IsUUID,
   Max,
   MaxLength,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -208,6 +209,18 @@ export class CreateDraftDto {
   @IsOptional()
   @IsISO8601()
   scheduledPickupAt?: string;
+}
+
+export class CheckoutDto {
+  @ApiPropertyOptional({ example: '2026-06-21T15:30:00.000Z', description: 'Hora de recogida programada (ISO-8601)' })
+  @IsOptional()
+  @IsISO8601()
+  scheduledPickupAt?: string;
+
+  @ApiPropertyOptional({ example: '18:00', description: 'Hora de cierre de la tienda (HH:mm)' })
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/)
+  closeTime?: string;
 }
 
 export class UpsertCartItemDto {

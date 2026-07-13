@@ -14,6 +14,7 @@ export const ORDER_EVENTS = {
   CREATED: 'order.order.created',
   CONFIRMED: 'order.order.confirmed',
   CANCELLED: 'order.order.cancelled',
+  READY_FOR_PICKUP: 'order.order.ready_for_pickup',
   STATUS_CHANGED: 'order.order.status_changed',
   CHAT_MESSAGE_SENT: 'order.chat.message.sent',
   // Carrito (orden DRAFT) y devoluciones: products-service los consume.
