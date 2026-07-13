@@ -64,6 +64,7 @@ export interface OrderCreatedPayload {
 
 export interface OrderConfirmedPayload {
   orderId: string;
+  orderNumber: string;
   buyerId: string;
   storeId: string;
   pickupExpiresAt: string; // ISO-8601 UTC

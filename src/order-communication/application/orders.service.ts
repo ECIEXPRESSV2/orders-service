@@ -817,6 +817,7 @@ export class OrdersService {
     if (order.status === 'CONFIRMED' && previousStatus !== 'CONFIRMED') {
       await this.events.publish(ORDER_EVENTS.CONFIRMED, {
         orderId: order.id,
+        orderNumber: order.orderNumber,
         buyerId: order.customerId,
         storeId: order.storeId,
         pickupExpiresAt: order.pickupExpiresAt,
