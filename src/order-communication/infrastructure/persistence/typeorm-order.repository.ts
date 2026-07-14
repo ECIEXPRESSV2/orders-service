@@ -72,6 +72,12 @@ export class TypeOrmOrderRepository implements OrderRepository {
         { id: order.id, status: expectedFromStatus },
         {
           status: order.status,
+          // El pedido debe persistir el total REAL cobrado (productos + recargo de hora
+          // pico si aplica), no solo el subtotal de productos con el que se creó — ese
+          // total puede haberse recalculado/confirmado durante la transición (ej. al
+          // aprobarse el pago). Sin esto, la BD se queda con el valor de creación aunque
+          // el comprobante de pago ya muestre el total correcto.
+          totalAmount: order.totalAmount,
           pickupExpiresAt: order.pickupExpiresAt ? new Date(order.pickupExpiresAt) : null,
           cancelledAt: order.cancelledAt ? new Date(order.cancelledAt) : null,
         },
