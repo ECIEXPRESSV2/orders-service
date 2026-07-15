@@ -1,6 +1,8 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from '../application/orders.service';
+import { ReturnEvidenceService, MAX_IMAGE_BYTES, type UploadedImage } from '../application/return-evidence.service';
 import {
   CancelOrderDto,
   CheckoutDto,
@@ -14,7 +16,6 @@ import {
   UpsertCartItemDto,
 } from '../application/orders.dto';
 import { FirebaseAuthGuard } from '../../common/auth/firebase-auth.guard';
-import { AdminGuard } from '../../common/auth/admin.guard';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthUser } from '../../common/auth/auth-user';
 
@@ -23,7 +24,10 @@ import type { AuthUser } from '../../common/auth/auth-user';
 @UseGuards(FirebaseAuthGuard)
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly returnEvidence: ReturnEvidenceService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create order' })
@@ -71,18 +75,34 @@ export class OrdersController {
     return this.ordersService.requestReturn(id, dto);
   }
 
+  @Post(':id/returns/evidence')
+  @UseInterceptors(FilesInterceptor('files', 3, { limits: { fileSize: MAX_IMAGE_BYTES } }))
+  @ApiOperation({ summary: 'Buyer: upload up to 3 evidence photos for a return request (before calling POST returns)' })
+  uploadReturnEvidence(
+    @Param('id') id: string,
+    @Body('refundId') refundId: string,
+    @UploadedFiles() files: UploadedImage[],
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.returnEvidence.upload(id, user.userId, refundId, files);
+  }
+
+  @Get(':id/returns/evidence/:refundId')
+  @ApiOperation({ summary: 'Buyer or store staff: fetch fresh read URLs for a return evidence set' })
+  getReturnEvidence(@Param('id') id: string, @Param('refundId') refundId: string, @CurrentUser() user: AuthUser) {
+    return this.returnEvidence.list(id, user.userId, refundId);
+  }
+
   @Post(':id/returns/approve')
-  @UseGuards(AdminGuard)
-  @ApiOperation({ summary: 'Admin: approve a post-pickup return pending approval' })
-  approveReturn(@Param('id') id: string) {
-    return this.ordersService.approveReturn(id);
+  @ApiOperation({ summary: 'Store staff: approve a post-pickup return pending approval' })
+  approveReturn(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.ordersService.approveReturn(id, user.userId);
   }
 
   @Post(':id/returns/reject')
-  @UseGuards(AdminGuard)
-  @ApiOperation({ summary: 'Admin: reject a post-pickup return pending approval' })
-  rejectReturn(@Param('id') id: string, @Body() dto: RejectReturnDto) {
-    return this.ordersService.rejectReturn(id, dto?.reason);
+  @ApiOperation({ summary: 'Store staff: reject a post-pickup return pending approval' })
+  rejectReturn(@Param('id') id: string, @Body() dto: RejectReturnDto, @CurrentUser() user: AuthUser) {
+    return this.ordersService.rejectReturn(id, user.userId, dto?.reason);
   }
 
   @Get()

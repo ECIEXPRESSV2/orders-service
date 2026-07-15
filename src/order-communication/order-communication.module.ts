@@ -10,6 +10,8 @@ import { MessagesController } from './presentation/messages.controller';
 import { OrdersService } from './application/orders.service';
 import { CommunicationService } from './application/communication.service';
 import { StoreDirectoryService } from './application/store-directory.service';
+import { ReturnEvidenceService } from './application/return-evidence.service';
+import { BlobStorageService } from '../common/storage/blob-storage.service';
 import { ORDER_REPOSITORY } from './application/ports/order.repository';
 import { COMMUNICATION_REPOSITORY } from './application/ports/communication.repository';
 import { EVENT_PUBLISHER } from './application/ports/event-publisher';
@@ -57,6 +59,8 @@ import { TypeOrmCommunicationRepository } from './infrastructure/persistence/typ
     OrdersService,
     CommunicationService,
     StoreDirectoryService,
+    ReturnEvidenceService,
+    BlobStorageService,
     IdentityAuthClient,
     FirebaseAuthGuard,
     ServiceBusService,

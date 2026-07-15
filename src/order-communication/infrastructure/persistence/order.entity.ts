@@ -118,4 +118,11 @@ export class OrderEntity {
 
   @Column({ name: 'pending_return_from_status', type: 'varchar', length: 32, nullable: true })
   pendingReturnFromStatus?: OrderStatus | null;
+
+  /** Motivo + carpeta de evidencia de la última solicitud de devolución (ver order.models.ts). */
+  @Column({ name: 'last_return_reason', type: 'text', nullable: true })
+  lastReturnReason?: string | null;
+
+  @Column({ name: 'last_return_refund_id', type: 'varchar', length: 64, nullable: true })
+  lastReturnRefundId?: string | null;
 }

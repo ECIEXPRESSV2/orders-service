@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { RealtimeHubService } from '../../common/realtime-hub.service';
 import { CommunicationService } from './communication.service';
 import { ORDER_REPOSITORY } from './ports/order.repository';
@@ -510,6 +510,12 @@ export class OrdersService {
       throw new BadRequestException('Indica los productos a devolver o solicita una devolución total');
     }
 
+    // Se persiste ANTES de publicar el evento (y aparte de statusHistory/finalize: esto no
+    // cambia el estado) para que, si products responde muy rápido, applyReturnPriced ya
+    // encuentre el motivo/evidencia al armar el mensaje de chat.
+    const withEvidence: Order = { ...order, lastReturnReason: dto.reason, lastReturnRefundId: dto.refundId };
+    const saved = await this.orderRepository.save(withEvidence);
+
     await this.events.publish(ORDER_EVENTS.RETURN_REQUESTED, {
       orderId: order.id,
       storeId: order.storeId,
@@ -518,7 +524,7 @@ export class OrdersService {
       reason: dto.reason,
     });
     // El estado se actualiza al llegar products.return.priced.
-    return this.toResponse(order);
+    return this.toResponse(saved);
   }
 
   /**
@@ -550,6 +556,25 @@ export class OrdersService {
         `Devolución por ${event.refundAmount} centavos pendiente de aprobación`,
       );
       await this.finalize(order.status, updated);
+      const items = event.lines.map((line) => {
+        const orderItem = order.items.find((i) => i.productId === line.productId);
+        return {
+          productId: line.productId,
+          name: orderItem?.name ?? line.productId,
+          imageUrl: orderItem?.imageUrl,
+          quantity: line.quantity,
+          amount: line.amount,
+        };
+      });
+      await this.communicationService.postRefundMessage(order.id, {
+        orderId: order.id,
+        amount: event.refundAmount,
+        full: event.full,
+        kind: 'requested',
+        reason: order.lastReturnReason,
+        refundId: order.lastReturnRefundId,
+        items,
+      });
       return;
     }
 
@@ -573,9 +598,17 @@ export class OrdersService {
     });
   }
 
-  /** Admin aprueba una devolución post-recogida: aplica la transición y autoriza el reembolso. */
-  async approveReturn(id: string): Promise<OrderResponseDto> {
+  /** Verifica que `userId` sea staff activo (o dueño) de la tienda del pedido. */
+  private async assertStoreStaff(order: Order, userId: string): Promise<void> {
+    if (!(await this.identity.isStoreStaff(order.storeId, userId))) {
+      throw new ForbiddenException('No eres staff de la tienda de este pedido');
+    }
+  }
+
+  /** El vendedor aprueba una devolución post-recogida: aplica la transición y autoriza el reembolso. */
+  async approveReturn(id: string, actorId: string): Promise<OrderResponseDto> {
     const order = await this.requireOrder(id);
+    await this.assertStoreStaff(order, actorId);
     if (order.status !== 'RETURN_PENDING_APPROVAL') {
       throw new ConflictException(`El pedido ${id} no tiene una devolución pendiente de aprobación`);
     }
@@ -589,7 +622,7 @@ export class OrdersService {
       pendingReturnFull: undefined,
       pendingReturnFromStatus: undefined,
     };
-    const updated = this.transitionTo(cleared, toStatus, 'system', 'Devolución aprobada por admin');
+    const updated = this.transitionTo(cleared, toStatus, 'vendor', 'Devolución aprobada por la tienda');
     await this.finalize(order.status, updated);
 
     await this.events.publish(ORDER_EVENTS.RETURN_CONFIRMED, {
@@ -599,12 +632,14 @@ export class OrdersService {
       full,
       refundAmount: amount,
     });
+    await this.communicationService.resolveRefundMessage(order.id, { kind: 'approved' });
     return this.toResponse(updated);
   }
 
-  /** Admin rechaza una devolución post-recogida: el pedido vuelve a su estado anterior, sin reembolso. */
-  async rejectReturn(id: string, reason?: string): Promise<OrderResponseDto> {
+  /** El vendedor rechaza una devolución post-recogida: el pedido vuelve a su estado anterior, sin reembolso. */
+  async rejectReturn(id: string, actorId: string, reason?: string): Promise<OrderResponseDto> {
     const order = await this.requireOrder(id);
+    await this.assertStoreStaff(order, actorId);
     if (order.status !== 'RETURN_PENDING_APPROVAL') {
       throw new ConflictException(`El pedido ${id} no tiene una devolución pendiente de aprobación`);
     }
@@ -619,10 +654,11 @@ export class OrdersService {
     const updated = this.transitionTo(
       cleared,
       restoreTo,
-      'system',
-      reason ?? 'Devolución rechazada por admin',
+      'vendor',
+      reason ?? 'Devolución rechazada por la tienda',
     );
     await this.finalize(order.status, updated);
+    await this.communicationService.resolveRefundMessage(order.id, { kind: 'rejected', reason });
     return this.toResponse(updated);
   }
 

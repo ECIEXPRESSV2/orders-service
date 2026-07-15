@@ -55,7 +55,7 @@ class FakeEventPublisher implements EventPublisher {
 const identity: IdentityPort = {
   getStoreAvailability: async () => ({ available: true }),
   getStoreVendorId: async () => null,
-  isStoreStaff: async () => false,
+  isStoreStaff: async () => true,
   getStoreDisplay: async () => null,
   getUserDisplay: async () => null,
 };
@@ -88,6 +88,16 @@ class FakeCommunicationService {
   }
   async closeConversationForOrder(orderId: string) {
     this.closedOrderIds.push(orderId);
+  }
+  refundMessages: Array<{ orderId: string; kind: string }> = [];
+  async postRefundMessage(orderId: string, payload: { kind: string }) {
+    this.refundMessages.push({ orderId, kind: payload.kind });
+    return null;
+  }
+  refundResolutions: Array<{ orderId: string; kind: string }> = [];
+  async resolveRefundMessage(orderId: string, patch: { kind: string }) {
+    this.refundResolutions.push({ orderId, kind: patch.kind });
+    return null;
   }
 }
 
@@ -316,7 +326,7 @@ describe('OrdersService', () => {
     expect(unchanged.status).toBe('PENDING_PAYMENT');
   });
 
-  describe('devoluciones post-recogida (aprobación de admin)', () => {
+  describe('devoluciones post-recogida (aprobación del vendedor)', () => {
     const toDelivered = async (): Promise<string> => {
       const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
       await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
@@ -357,11 +367,13 @@ describe('OrdersService', () => {
         orderId, storeId: 'store-1', full: true, refundAmount: 700000, lines: [],
       });
       events.events = [];
-      const approved = await service.approveReturn(orderId);
+      const approved = await service.approveReturn(orderId, 'vendor-1');
       expect(approved.status).toBe('RETURNED');
       expect(approved.pendingReturnAmount).toBeUndefined();
       const confirmed = events.events.find((e) => e.routingKey === 'order.return.confirmed');
       expect(confirmed?.payload).toMatchObject({ full: true, refundAmount: 700000 });
+      expect(communication.refundMessages).toContainEqual({ orderId, kind: 'requested' });
+      expect(communication.refundResolutions).toContainEqual({ orderId, kind: 'approved' });
     });
 
     it('rejectReturn restaura DELIVERED y no reembolsa', async () => {
@@ -370,15 +382,30 @@ describe('OrdersService', () => {
         orderId, storeId: 'store-1', full: false, refundAmount: 100000, lines: [],
       });
       events.events = [];
-      const rejected = await service.rejectReturn(orderId, 'Fotos no coinciden');
+      const rejected = await service.rejectReturn(orderId, 'vendor-1', 'Fotos no coinciden');
       expect(rejected.status).toBe('DELIVERED');
       expect(rejected.pendingReturnAmount).toBeUndefined();
       expect(events.keys()).not.toContain('order.return.confirmed');
+      expect(communication.refundResolutions).toContainEqual({ orderId, kind: 'rejected' });
     });
 
     it('approveReturn rechaza con 409 si no hay devolución pendiente', async () => {
       const orderId = await toDelivered();
-      await expect(service.approveReturn(orderId)).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.approveReturn(orderId, 'vendor-1')).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('approveReturn rechaza con 403 si el actor no es staff de la tienda', async () => {
+      const outsider = new OrdersService(
+        repo, events,
+        { ...identity, isStoreStaff: async () => false },
+        products, financial, communication as unknown as import('./communication.service').CommunicationService,
+        new RealtimeHubService(), new StoreDirectoryService(),
+      );
+      const orderId = await toDelivered();
+      await outsider.applyReturnPriced({
+        orderId, storeId: 'store-1', full: true, refundAmount: 700000, lines: [],
+      });
+      await expect(outsider.approveReturn(orderId, 'random-user')).rejects.toThrow('No eres staff de la tienda de este pedido');
     });
 
     it('una segunda devolución parcial sobre PARTIALLY_RETURNED tampoco se auto-aplica', async () => {
@@ -386,7 +413,7 @@ describe('OrdersService', () => {
       await service.applyReturnPriced({
         orderId, storeId: 'store-1', full: false, refundAmount: 100000, lines: [],
       });
-      await service.approveReturn(orderId); // → PARTIALLY_RETURNED
+      await service.approveReturn(orderId, 'vendor-1'); // → PARTIALLY_RETURNED
       expect((await service.getOrderById(orderId)).status).toBe('PARTIALLY_RETURNED');
 
       events.events = [];
@@ -397,7 +424,7 @@ describe('OrdersService', () => {
       expect(updated.status).toBe('RETURN_PENDING_APPROVAL');
       expect(events.keys()).not.toContain('order.return.confirmed');
 
-      await service.rejectReturn(orderId);
+      await service.rejectReturn(orderId, 'vendor-1');
       expect((await service.getOrderById(orderId)).status).toBe('PARTIALLY_RETURNED');
     });
   });

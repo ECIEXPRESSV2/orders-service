@@ -32,7 +32,13 @@ class FakeCommunicationRepository implements CommunicationRepository {
   async saveConversation(c: Conversation) { this.conv = c; this.hasConversation = true; return c; }
   async getConversationMessages() { return this.messages; }
   async listMessages() { return { items: this.messages, total: this.messages.length }; }
-  async saveMessage(m: Message) { this.messages.push(m); return m; }
+  async saveMessage(m: Message) {
+    // Igual que TypeORM .save(): upsert por id (inserta si es nuevo, reemplaza si ya existía).
+    const idx = this.messages.findIndex((existing) => existing.id === m.id);
+    if (idx >= 0) this.messages[idx] = m;
+    else this.messages.push(m);
+    return m;
+  }
   async markMessageAsRead(messageId: string) { return this.messages.find((m) => m.id === messageId) ?? null; }
   async markConversationRead() { return { conversation: this.conv, messageIds: [] as string[] }; }
   async setConversationStatus(_id: string, status: 'active' | 'archived' | 'closed') { this.conv = { ...this.conv, status }; return this.conv; }
@@ -183,5 +189,41 @@ describe('CommunicationService', () => {
     expect(result.storeLogoUrl).toBeUndefined();
     expect(result.customerName).toBeUndefined();
     expect(result.customerAvatarUrl).toBeUndefined();
+  });
+
+  describe('tarjeta de reembolso', () => {
+    it('postRefundMessage crea un mensaje messageType=refund con el payload como JSON', async () => {
+      const msg = await service.postRefundMessage('order-1', {
+        orderId: 'order-1', amount: 50000, full: true, kind: 'requested', reason: 'Dañado',
+      });
+      expect(msg?.messageType).toBe('refund');
+      expect(JSON.parse(msg!.content)).toMatchObject({ kind: 'requested', amount: 50000, reason: 'Dañado' });
+      expect(repo.conv.lastMessagePreview).toContain('solicitado');
+    });
+
+    it('postRefundMessage es no-op si el pedido nunca tuvo chat', async () => {
+      repo.hasConversation = false;
+      const msg = await service.postRefundMessage('order-1', { orderId: 'order-1', amount: 1, full: true, kind: 'requested' });
+      expect(msg).toBeNull();
+    });
+
+    it('resolveRefundMessage actualiza EN EL MISMO mensaje (no crea uno nuevo)', async () => {
+      const created = await service.postRefundMessage('order-1', { orderId: 'order-1', amount: 50000, full: true, kind: 'requested' });
+      const resolved = await service.resolveRefundMessage('order-1', { kind: 'approved' });
+      expect(resolved?.id).toBe(created?.id);
+      expect(repo.messages).toHaveLength(1);
+      expect(JSON.parse(resolved!.content)).toMatchObject({ kind: 'approved' });
+    });
+
+    it('resolveRefundMessage con rechazo agrega el motivo del vendedor', async () => {
+      await service.postRefundMessage('order-1', { orderId: 'order-1', amount: 50000, full: true, kind: 'requested' });
+      const resolved = await service.resolveRefundMessage('order-1', { kind: 'rejected', reason: 'Fotos no coinciden' });
+      expect(JSON.parse(resolved!.content)).toMatchObject({ kind: 'rejected', reason: 'Fotos no coinciden' });
+    });
+
+    it('resolveRefundMessage es no-op si no hay ninguna tarjeta de reembolso en el chat', async () => {
+      const resolved = await service.resolveRefundMessage('order-1', { kind: 'approved' });
+      expect(resolved).toBeNull();
+    });
   });
 });

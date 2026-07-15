@@ -8,7 +8,7 @@ import { IDENTITY_PORT } from './ports/identity.port';
 import type { IdentityPort } from './ports/identity.port';
 import { ORDER_EVENTS } from '../infrastructure/messaging/event-contracts';
 import { ConversationQueryDto, ConversationResponseDto, MarkMessageReadDto, MessageQueryDto, MessageResponseDto, SendMessageDto, TypingDto } from './communication.dto';
-import { createConversation, createMessage, Conversation } from '../domain/communication.models';
+import { createConversation, createMessage, Conversation, RefundMessageKind, RefundMessagePayload, SYSTEM_SENDER_ID } from '../domain/communication.models';
 
 @Injectable()
 export class CommunicationService {
@@ -181,6 +181,97 @@ export class CommunicationService {
     });
 
     return payload;
+  }
+
+  /**
+   * Publica en el chat del pedido una tarjeta de reembolso (solicitado/aprobado/rechazado).
+   * `content` va como JSON de `RefundMessagePayload`; el frontend la interpreta según
+   * `messageType: 'refund'` para pintar la imagen + estado + acciones del vendedor.
+   * No-op si el pedido nunca llegó a tener conversación (no se confirmó): no hay dónde avisar.
+   */
+  async postRefundMessage(orderId: string, payload: RefundMessagePayload): Promise<MessageResponseDto | null> {
+    const conversation = await this.communicationRepository.findConversationByOrderId(orderId);
+    if (!conversation) return null;
+
+    const message = createMessage({
+      conversationId: conversation.id,
+      senderId: SYSTEM_SENDER_ID,
+      senderRole: 'system',
+      content: JSON.stringify(payload),
+      messageType: 'refund',
+    });
+
+    await this.communicationRepository.saveMessage(message);
+    await this.communicationRepository.incrementUnreadCounts(conversation.id, SYSTEM_SENDER_ID);
+    const preview =
+      payload.kind === 'requested' ? '💸 Reembolso solicitado' : payload.kind === 'approved' ? '💸 Reembolso aprobado' : '💸 Reembolso rechazado';
+    await this.communicationRepository.saveConversation({
+      ...conversation,
+      lastMessageAt: message.createdAt,
+      lastMessagePreview: preview,
+      updatedAt: message.createdAt,
+    });
+
+    const responsePayload = this.toMessageResponse(message);
+    this.realtimeHub.publish({
+      type: 'message:new',
+      room: `conversation:${conversation.id}`,
+      payload: responsePayload,
+      occurredAt: new Date().toISOString(),
+    });
+
+    const updated = await this.communicationRepository.findConversationById(conversation.id);
+    if (updated) {
+      this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
+    }
+
+    return responsePayload;
+  }
+
+  /**
+   * Resuelve (aprueba/rechaza) el reembolso pendiente del pedido: actualiza EN EL MISMO mensaje
+   * la tarjeta que se creó con `postRefundMessage` (cambia `kind`, agrega `reason` si rechaza),
+   * en vez de publicar un mensaje nuevo — así el chat muestra una sola tarjeta cuyo estado
+   * evoluciona, no una serie de tarjetas repetidas. No-op si no hay conversación o no hay
+   * ninguna tarjeta de reembolso en ella (no debería pasar: se llama justo tras aprobar/rechazar).
+   */
+  async resolveRefundMessage(
+    orderId: string,
+    patch: { kind: Extract<RefundMessageKind, 'approved' | 'rejected'>; reason?: string },
+  ): Promise<MessageResponseDto | null> {
+    const conversation = await this.communicationRepository.findConversationByOrderId(orderId);
+    if (!conversation) return null;
+
+    const messages = await this.communicationRepository.getConversationMessages(conversation.id);
+    const target = [...messages].reverse().find((m) => m.messageType === 'refund');
+    if (!target) return null;
+
+    const payload = JSON.parse(target.content) as RefundMessagePayload;
+    const nextPayload: RefundMessagePayload = { ...payload, kind: patch.kind, reason: patch.reason ?? payload.reason };
+    const updatedMessage = { ...target, content: JSON.stringify(nextPayload), updatedAt: new Date().toISOString() };
+
+    await this.communicationRepository.saveMessage(updatedMessage);
+    const responsePayload = this.toMessageResponse(updatedMessage);
+    this.realtimeHub.publish({
+      type: 'message:updated',
+      room: `conversation:${conversation.id}`,
+      payload: responsePayload,
+      occurredAt: new Date().toISOString(),
+    });
+
+    const preview = patch.kind === 'approved' ? '💸 Reembolso aprobado' : '💸 Reembolso rechazado';
+    await this.communicationRepository.saveConversation({
+      ...conversation,
+      lastMessageAt: updatedMessage.updatedAt,
+      lastMessagePreview: preview,
+      updatedAt: updatedMessage.updatedAt,
+    });
+    const updatedConversation = await this.communicationRepository.findConversationById(conversation.id);
+    if (updatedConversation) {
+      this.publishToParticipants(updatedConversation, 'conversation:updated', this.toConversationResponse(updatedConversation));
+    }
+
+    return responsePayload;
   }
 
   async markMessageAsRead(dto: MarkMessageReadDto): Promise<MessageResponseDto> {
