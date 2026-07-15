@@ -104,4 +104,18 @@ export class OrderEntity {
 
   @Column({ name: 'deleted_at', type: 'timestamptz', nullable: true })
   deletedAt?: Date | null;
+
+  /**
+   * Devolución cotizada por products mientras el pedido espera aprobación de un admin
+   * (status RETURN_PENDING_APPROVAL). `pendingReturnFromStatus` guarda de dónde vino
+   * (DELIVERED o PARTIALLY_RETURNED) para restaurarlo si el admin rechaza.
+   */
+  @Column({ name: 'pending_return_amount', type: 'bigint', transformer: bigintCentavosTransformer, nullable: true })
+  pendingReturnAmount?: number | null;
+
+  @Column({ name: 'pending_return_full', type: 'boolean', nullable: true })
+  pendingReturnFull?: boolean | null;
+
+  @Column({ name: 'pending_return_from_status', type: 'varchar', length: 32, nullable: true })
+  pendingReturnFromStatus?: OrderStatus | null;
 }

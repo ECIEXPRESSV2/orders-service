@@ -80,6 +80,9 @@ export class TypeOrmOrderRepository implements OrderRepository {
           totalAmount: order.totalAmount,
           pickupExpiresAt: order.pickupExpiresAt ? new Date(order.pickupExpiresAt) : null,
           cancelledAt: order.cancelledAt ? new Date(order.cancelledAt) : null,
+          pendingReturnAmount: order.pendingReturnAmount ?? null,
+          pendingReturnFull: order.pendingReturnFull ?? null,
+          pendingReturnFromStatus: order.pendingReturnFromStatus ?? null,
         },
       );
       if (!result.affected) return null;
@@ -182,6 +185,9 @@ export class TypeOrmOrderRepository implements OrderRepository {
     entity.pickupExpiresAt = order.pickupExpiresAt ? new Date(order.pickupExpiresAt) : null;
     entity.cancelledAt = order.cancelledAt ? new Date(order.cancelledAt) : null;
     entity.deletedAt = order.deletedAt ? new Date(order.deletedAt) : null;
+    entity.pendingReturnAmount = order.pendingReturnAmount ?? null;
+    entity.pendingReturnFull = order.pendingReturnFull ?? null;
+    entity.pendingReturnFromStatus = order.pendingReturnFromStatus ?? null;
 
     entity.items = order.items.map((item) => {
       const itemEntity = new OrderItemEntity();
@@ -294,6 +300,9 @@ export class TypeOrmOrderRepository implements OrderRepository {
       updatedAt: entity.updatedAt.toISOString(),
       cancelledAt: iso(entity.cancelledAt),
       deletedAt: iso(entity.deletedAt),
+      pendingReturnAmount: entity.pendingReturnAmount ?? undefined,
+      pendingReturnFull: entity.pendingReturnFull ?? undefined,
+      pendingReturnFromStatus: entity.pendingReturnFromStatus ?? undefined,
     };
   }
 }

@@ -34,6 +34,7 @@ import {
 import {
   attachRating,
   calculateAmounts,
+  CancellationRefundPolicy,
   canTransitionOrder,
   CONFIRMED_OR_LATER,
   createHistoryEntry,
@@ -521,15 +522,37 @@ export class OrdersService {
   }
 
   /**
-   * Aplica la devolución cotizada por products: marca la orden devuelta y, como
-   * dueña del pedido, AUTORIZA el reembolso emitiendo `order.return.confirmed` para
-   * que financial acredite la billetera. orders no calcula el monto: solo reenvía el
-   * que cotizó products.
+   * Aplica la devolución cotizada por products. Si el pedido YA fue recogido (DELIVERED o
+   * PARTIALLY_RETURNED), no se auto-aplica: pasa a RETURN_PENDING_APPROVAL a la espera de que
+   * un admin la apruebe o la rechace (necesita verificar evidencia antes de mover dinero). Si
+   * todavía no se recoge (CONFIRMED/READY_FOR_PICKUP), se aplica de inmediato como hoy: marca
+   * la orden devuelta y, como dueña del pedido, AUTORIZA el reembolso emitiendo
+   * `order.return.confirmed` para que financial acredite la billetera. orders no calcula el
+   * monto: solo reenvía el que cotizó products.
    */
   async applyReturnPriced(event: IncomingReturnPricedEvent): Promise<void> {
     const order = await this.orderRepository.findById(event.orderId);
     if (!order) return;
     if (event.refundAmount <= 0) return;
+
+    if (order.status === 'DELIVERED' || order.status === 'PARTIALLY_RETURNED') {
+      if (!canTransitionOrder(order.status, 'RETURN_PENDING_APPROVAL')) return;
+      const pending: Order = {
+        ...order,
+        pendingReturnAmount: event.refundAmount,
+        pendingReturnFull: event.full,
+        pendingReturnFromStatus: order.status,
+      };
+      const updated = this.transitionTo(
+        pending,
+        'RETURN_PENDING_APPROVAL',
+        'system',
+        `Devolución por ${event.refundAmount} centavos pendiente de aprobación`,
+      );
+      await this.finalize(order.status, updated);
+      return;
+    }
+
     const toStatus: OrderStatus = event.full ? 'RETURNED' : 'PARTIALLY_RETURNED';
     if (!canTransitionOrder(order.status, toStatus)) return;
 
@@ -548,6 +571,59 @@ export class OrdersService {
       full: event.full,
       refundAmount: event.refundAmount,
     });
+  }
+
+  /** Admin aprueba una devolución post-recogida: aplica la transición y autoriza el reembolso. */
+  async approveReturn(id: string): Promise<OrderResponseDto> {
+    const order = await this.requireOrder(id);
+    if (order.status !== 'RETURN_PENDING_APPROVAL') {
+      throw new ConflictException(`El pedido ${id} no tiene una devolución pendiente de aprobación`);
+    }
+    const amount = order.pendingReturnAmount ?? 0;
+    const full = order.pendingReturnFull ?? false;
+    const toStatus: OrderStatus = full ? 'RETURNED' : 'PARTIALLY_RETURNED';
+
+    const cleared: Order = {
+      ...order,
+      pendingReturnAmount: undefined,
+      pendingReturnFull: undefined,
+      pendingReturnFromStatus: undefined,
+    };
+    const updated = this.transitionTo(cleared, toStatus, 'system', 'Devolución aprobada por admin');
+    await this.finalize(order.status, updated);
+
+    await this.events.publish(ORDER_EVENTS.RETURN_CONFIRMED, {
+      orderId: order.id,
+      buyerId: order.customerId,
+      storeId: order.storeId,
+      full,
+      refundAmount: amount,
+    });
+    return this.toResponse(updated);
+  }
+
+  /** Admin rechaza una devolución post-recogida: el pedido vuelve a su estado anterior, sin reembolso. */
+  async rejectReturn(id: string, reason?: string): Promise<OrderResponseDto> {
+    const order = await this.requireOrder(id);
+    if (order.status !== 'RETURN_PENDING_APPROVAL') {
+      throw new ConflictException(`El pedido ${id} no tiene una devolución pendiente de aprobación`);
+    }
+    const restoreTo = order.pendingReturnFromStatus ?? 'DELIVERED';
+
+    const cleared: Order = {
+      ...order,
+      pendingReturnAmount: undefined,
+      pendingReturnFull: undefined,
+      pendingReturnFromStatus: undefined,
+    };
+    const updated = this.transitionTo(
+      cleared,
+      restoreTo,
+      'system',
+      reason ?? 'Devolución rechazada por admin',
+    );
+    await this.finalize(order.status, updated);
+    return this.toResponse(updated);
   }
 
   async getOrders(query?: { customerId?: string; storeId?: string; status?: string }): Promise<OrderResponseDto[]> {
@@ -578,6 +654,12 @@ export class OrdersService {
 
   async cancelOrder(id: string, dto: CancelOrderDto): Promise<OrderResponseDto> {
     const order = await this.requireOrder(id);
+    // A partir de READY_FOR_PICKUP el cliente ya no puede cancelar (el negocio ya preparó el
+    // pedido): el state machine SÍ permite READY_FOR_PICKUP -> CANCELLED, pero solo para el
+    // vencimiento del QR (handleQrExpired). Este endpoint público lo bloquea explícitamente.
+    if (order.status === 'READY_FOR_PICKUP') {
+      throw new ConflictException('No se puede cancelar un pedido listo para retirar');
+    }
     // Un pedido entregado/cancelado/devuelto (estado terminal) no admite cancelación.
     if (!canTransitionOrder(order.status, 'CANCELLED')) {
       throw new ConflictException(`No se puede cancelar un pedido en estado ${order.status}`);
@@ -590,7 +672,9 @@ export class OrdersService {
       dto.reason ?? 'Cancelled by user',
       dto.actorId,
     );
-    await this.finalize(previous, updated);
+    // Cancelación del cliente antes de listo-para-retirar: reembolso automático del 50% del
+    // valor de productos; la comisión de hora pico (si aplicó) se pierde por completo.
+    await this.finalize(previous, updated, 'HALF_PRODUCTS_ONLY');
     return this.toResponse(updated);
   }
 
@@ -702,12 +786,12 @@ export class OrdersService {
     await this.finalize(order.status, failed);
   }
 
-  /** fulfillment.qr.expired -> CANCELLED (dispara reembolso en financial) */
+  /** fulfillment.qr.expired -> CANCELLED. Sin reembolso: el negocio ya preparó el pedido. */
   async handleQrExpired(orderId: string): Promise<void> {
     const order = await this.orderRepository.findById(orderId);
     if (!order || !canTransitionOrder(order.status, 'CANCELLED')) return;
     const cancelled = this.transitionTo(order, 'CANCELLED', 'fulfillment', 'Pickup QR expired');
-    await this.finalize(order.status, cancelled);
+    await this.finalize(order.status, cancelled, 'NO_REFUND');
   }
 
   /**
@@ -815,7 +899,11 @@ export class OrdersService {
   }
 
   /** Persiste, emite eventos de dominio y notifica por WebSocket. */
-  private async finalize(previousStatus: OrderStatus, order: Order): Promise<void> {
+  private async finalize(
+    previousStatus: OrderStatus,
+    order: Order,
+    refundPolicy?: CancellationRefundPolicy,
+  ): Promise<void> {
     // Persistencia segura ante concurrencia: solo aplica si el pedido sigue en
     // `previousStatus`. Si otro proceso ya lo cambió, abortamos sin pisar el estado.
     const saved = await this.orderRepository.saveTransition(order, previousStatus);
@@ -870,6 +958,7 @@ export class OrdersService {
         orderId: order.id,
         buyerId: order.customerId,
         wasSold: CONFIRMED_OR_LATER.has(previousStatus),
+        refundPolicy,
       });
     }
     this.broadcast(order);
@@ -968,6 +1057,8 @@ export class OrdersService {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       cancelledAt: order.cancelledAt,
+      pendingReturnAmount: order.pendingReturnAmount,
+      pendingReturnFull: order.pendingReturnFull,
     };
   }
 }
