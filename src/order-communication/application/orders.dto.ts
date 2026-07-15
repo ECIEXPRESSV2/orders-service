@@ -278,6 +278,15 @@ export class RequestReturnDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+
+  @ApiPropertyOptional({
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    description: 'Id generado por el cliente para la carpeta de evidencia subida vía POST :id/returns/evidence (opcional, sin fotos se omite).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  refundId?: string;
 }
 
 export class UpdateOrderStatusDto {
