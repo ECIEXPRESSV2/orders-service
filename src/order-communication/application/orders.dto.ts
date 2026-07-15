@@ -319,6 +319,14 @@ export class CancelOrderDto {
   reason?: string;
 }
 
+export class RejectReturnDto {
+  @ApiPropertyOptional({ example: 'Las fotos no corresponden al producto reportado' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class RateOrderDto {
   @ApiPropertyOptional({ description: 'UUID del comprador. Se ignora si hay token.' })
   @IsOptional()
@@ -380,6 +388,9 @@ export class OrderResponseDto {
   createdAt!: string;
   updatedAt!: string;
   cancelledAt?: string;
+  /** Devolución cotizada por products, pendiente de aprobación de admin (status RETURN_PENDING_APPROVAL). */
+  pendingReturnAmount?: number;
+  pendingReturnFull?: boolean;
 }
 
 export class FrequentProductDto {

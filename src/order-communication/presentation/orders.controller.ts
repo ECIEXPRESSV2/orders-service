@@ -8,11 +8,13 @@ import {
   CreateOrderDto,
   QuoteCartDto,
   RateOrderDto,
+  RejectReturnDto,
   RequestReturnDto,
   UpdateOrderStatusDto,
   UpsertCartItemDto,
 } from '../application/orders.dto';
 import { FirebaseAuthGuard } from '../../common/auth/firebase-auth.guard';
+import { AdminGuard } from '../../common/auth/admin.guard';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthUser } from '../../common/auth/auth-user';
 
@@ -67,6 +69,20 @@ export class OrdersController {
   @ApiOperation({ summary: 'Request a return (full or partial) for an order' })
   requestReturn(@Param('id') id: string, @Body() dto: RequestReturnDto) {
     return this.ordersService.requestReturn(id, dto);
+  }
+
+  @Post(':id/returns/approve')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: approve a post-pickup return pending approval' })
+  approveReturn(@Param('id') id: string) {
+    return this.ordersService.approveReturn(id);
+  }
+
+  @Post(':id/returns/reject')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: reject a post-pickup return pending approval' })
+  rejectReturn(@Param('id') id: string, @Body() dto: RejectReturnDto) {
+    return this.ordersService.rejectReturn(id, dto?.reason);
   }
 
   @Get()

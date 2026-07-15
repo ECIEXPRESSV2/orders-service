@@ -41,6 +41,21 @@ describe('order.models', () => {
       expect(canTransitionOrder('CREATED', 'DELIVERED')).toBe(false);
       expect(canTransitionOrder('CANCELLED', 'CONFIRMED')).toBe(false);
     });
+
+    it('permite READY_FOR_PICKUP -> CANCELLED (vencimiento de QR; el endpoint de cliente lo bloquea aparte)', () => {
+      expect(canTransitionOrder('READY_FOR_PICKUP', 'CANCELLED')).toBe(true);
+    });
+
+    it('las devoluciones post-recogida pasan por RETURN_PENDING_APPROVAL, no directo', () => {
+      expect(canTransitionOrder('DELIVERED', 'RETURNED')).toBe(false);
+      expect(canTransitionOrder('DELIVERED', 'PARTIALLY_RETURNED')).toBe(false);
+      expect(canTransitionOrder('DELIVERED', 'RETURN_PENDING_APPROVAL')).toBe(true);
+      expect(canTransitionOrder('PARTIALLY_RETURNED', 'RETURNED')).toBe(false);
+      expect(canTransitionOrder('PARTIALLY_RETURNED', 'RETURN_PENDING_APPROVAL')).toBe(true);
+      expect(canTransitionOrder('RETURN_PENDING_APPROVAL', 'RETURNED')).toBe(true);
+      expect(canTransitionOrder('RETURN_PENDING_APPROVAL', 'PARTIALLY_RETURNED')).toBe(true);
+      expect(canTransitionOrder('RETURN_PENDING_APPROVAL', 'DELIVERED')).toBe(true);
+    });
   });
 
   describe('calculateAmounts', () => {

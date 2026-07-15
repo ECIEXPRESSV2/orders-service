@@ -10,7 +10,11 @@ export type OrderStatus =
   | 'CANCELLED'
   | 'FAILED'
   | 'PARTIALLY_RETURNED'
-  | 'RETURNED';
+  | 'RETURNED'
+  | 'RETURN_PENDING_APPROVAL';
+
+/** Política de reembolso al cancelar, para que financial-service no tenga que adivinarla. */
+export type CancellationRefundPolicy = 'HALF_PRODUCTS_ONLY' | 'NO_REFUND';
 
 export type OrderActorType = 'customer' | 'vendor' | 'system' | 'payment' | 'fulfillment';
 export type OrderPaymentMethod = 'cash' | 'wallet' | 'card' | 'transfer';
@@ -21,7 +25,7 @@ export type OrderSource = 'web' | 'mobile' | 'admin';
 export const ORDER_STATUS_VALUES: OrderStatus[] = [
   'DRAFT', 'CREATED', 'PENDING_PAYMENT', 'PAYMENT_APPROVED', 'CONFIRMED',
   'IN_PREPARATION', 'READY_FOR_PICKUP', 'DELIVERED', 'CANCELLED', 'FAILED',
-  'PARTIALLY_RETURNED', 'RETURNED',
+  'PARTIALLY_RETURNED', 'RETURNED', 'RETURN_PENDING_APPROVAL',
 ];
 export const ORDER_ACTOR_TYPES: OrderActorType[] = ['customer', 'vendor', 'system', 'payment', 'fulfillment'];
 export const ORDER_PAYMENT_METHODS: OrderPaymentMethod[] = ['cash', 'wallet', 'card', 'transfer'];
@@ -103,6 +107,14 @@ export interface Order {
   updatedAt: string;
   cancelledAt?: string;
   deletedAt?: string;
+  /**
+   * Devolución cotizada por products mientras el pedido está en RETURN_PENDING_APPROVAL,
+   * a la espera de que un admin la apruebe o la rechace. `pendingReturnFromStatus` es el
+   * estado del que vino (DELIVERED o PARTIALLY_RETURNED) para poder restaurarlo si se rechaza.
+   */
+  pendingReturnAmount?: number;
+  pendingReturnFull?: boolean;
+  pendingReturnFromStatus?: OrderStatus;
 }
 
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
@@ -115,10 +127,15 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   PAYMENT_APPROVED: ['CONFIRMED', 'CANCELLED', 'FAILED'],
   CONFIRMED: ['IN_PREPARATION', 'CANCELLED', 'FAILED', 'PARTIALLY_RETURNED', 'RETURNED'],
   IN_PREPARATION: ['READY_FOR_PICKUP', 'FAILED'],
-  READY_FOR_PICKUP: ['DELIVERED', 'FAILED', 'PARTIALLY_RETURNED', 'RETURNED'],
-  DELIVERED: ['PARTIALLY_RETURNED', 'RETURNED'],
-  // Una devolución parcial admite devoluciones adicionales hasta completarse.
-  PARTIALLY_RETURNED: ['PARTIALLY_RETURNED', 'RETURNED'],
+  // 'CANCELLED' aquí es SOLO para el vencimiento del QR (handleQrExpired, actorType
+  // 'fulfillment'): el endpoint público de cancelación del cliente lo bloquea explícitamente
+  // con un guard propio en cancelOrder(), sin importar que el state machine lo permita.
+  READY_FOR_PICKUP: ['DELIVERED', 'FAILED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED'],
+  // Toda devolución solicitada después de la recogida (desde DELIVERED o sobre un pedido ya
+  // PARTIALLY_RETURNED) pasa primero por aprobación de un admin — no se auto-aplica.
+  DELIVERED: ['RETURN_PENDING_APPROVAL'],
+  PARTIALLY_RETURNED: ['RETURN_PENDING_APPROVAL'],
+  RETURN_PENDING_APPROVAL: ['RETURNED', 'PARTIALLY_RETURNED', 'DELIVERED'],
   RETURNED: [],
   CANCELLED: [],
   FAILED: ['CANCELLED'],

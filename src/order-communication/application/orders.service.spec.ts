@@ -217,13 +217,37 @@ describe('OrdersService', () => {
     expect(updated.status).toBe('FAILED');
   });
 
-  it('cancelOrder emite order.order.cancelled', async () => {
+  it('cancelOrder emite order.order.cancelled con refundPolicy HALF_PRODUCTS_ONLY', async () => {
     const created = await service.createOrder(buildDto());
     events.events = [];
     await service.cancelOrder(created.id, {});
     const updated = await service.getOrderById(created.id);
     expect(updated.status).toBe('CANCELLED');
-    expect(events.keys()).toContain('order.order.cancelled');
+    const cancelled = events.events.find((e) => e.routingKey === 'order.order.cancelled');
+    expect(cancelled?.payload.refundPolicy).toBe('HALF_PRODUCTS_ONLY');
+  });
+
+  it('cancelOrder rechaza con 409 si el pedido ya está listo para retirar', async () => {
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+    await service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' });
+    await service.updateOrderStatus(created.id, { status: 'READY_FOR_PICKUP', actorType: 'vendor' });
+    await expect(service.cancelOrder(created.id, {})).rejects.toBeInstanceOf(ConflictException);
+    const unchanged = await service.getOrderById(created.id);
+    expect(unchanged.status).toBe('READY_FOR_PICKUP');
+  });
+
+  it('handleQrExpired cancela desde READY_FOR_PICKUP con refundPolicy NO_REFUND', async () => {
+    const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+    await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+    await service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' });
+    await service.updateOrderStatus(created.id, { status: 'READY_FOR_PICKUP', actorType: 'vendor' });
+    events.events = [];
+    await service.handleQrExpired(created.id);
+    const updated = await service.getOrderById(created.id);
+    expect(updated.status).toBe('CANCELLED');
+    const cancelled = events.events.find((e) => e.routingKey === 'order.order.cancelled');
+    expect(cancelled?.payload.refundPolicy).toBe('NO_REFUND');
   });
 
   it('markDelivered transiciona a DELIVERED desde READY_FOR_PICKUP y cierra el chat', async () => {
@@ -290,6 +314,92 @@ describe('OrdersService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
     const unchanged = await service.getOrderById(created.id);
     expect(unchanged.status).toBe('PENDING_PAYMENT');
+  });
+
+  describe('devoluciones post-recogida (aprobación de admin)', () => {
+    const toDelivered = async (): Promise<string> => {
+      const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+      await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+      await service.updateOrderStatus(created.id, { status: 'IN_PREPARATION', actorType: 'vendor' });
+      await service.updateOrderStatus(created.id, { status: 'READY_FOR_PICKUP', actorType: 'vendor' });
+      await service.markDelivered(created.id);
+      return created.id;
+    };
+
+    it('applyReturnPriced NO auto-aplica desde DELIVERED: pasa a RETURN_PENDING_APPROVAL', async () => {
+      const orderId = await toDelivered();
+      events.events = [];
+      await service.applyReturnPriced({
+        orderId, storeId: 'store-1', full: true, refundAmount: 700000, lines: [],
+      });
+      const updated = await service.getOrderById(orderId);
+      expect(updated.status).toBe('RETURN_PENDING_APPROVAL');
+      expect(updated.pendingReturnAmount).toBe(700000);
+      expect(updated.pendingReturnFull).toBe(true);
+      expect(events.keys()).not.toContain('order.return.confirmed');
+    });
+
+    it('applyReturnPriced auto-aplica desde CONFIRMED (antes de recoger), sin cambios de comportamiento', async () => {
+      const created = await service.createOrder(buildDto({ paymentMethod: 'cash' })); // CREATED
+      await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+      events.events = [];
+      await service.applyReturnPriced({
+        orderId: created.id, storeId: 'store-1', full: true, refundAmount: 700000, lines: [],
+      });
+      const updated = await service.getOrderById(created.id);
+      expect(updated.status).toBe('RETURNED');
+      expect(events.keys()).toContain('order.return.confirmed');
+    });
+
+    it('approveReturn transiciona a RETURNED y publica order.return.confirmed', async () => {
+      const orderId = await toDelivered();
+      await service.applyReturnPriced({
+        orderId, storeId: 'store-1', full: true, refundAmount: 700000, lines: [],
+      });
+      events.events = [];
+      const approved = await service.approveReturn(orderId);
+      expect(approved.status).toBe('RETURNED');
+      expect(approved.pendingReturnAmount).toBeUndefined();
+      const confirmed = events.events.find((e) => e.routingKey === 'order.return.confirmed');
+      expect(confirmed?.payload).toMatchObject({ full: true, refundAmount: 700000 });
+    });
+
+    it('rejectReturn restaura DELIVERED y no reembolsa', async () => {
+      const orderId = await toDelivered();
+      await service.applyReturnPriced({
+        orderId, storeId: 'store-1', full: false, refundAmount: 100000, lines: [],
+      });
+      events.events = [];
+      const rejected = await service.rejectReturn(orderId, 'Fotos no coinciden');
+      expect(rejected.status).toBe('DELIVERED');
+      expect(rejected.pendingReturnAmount).toBeUndefined();
+      expect(events.keys()).not.toContain('order.return.confirmed');
+    });
+
+    it('approveReturn rechaza con 409 si no hay devolución pendiente', async () => {
+      const orderId = await toDelivered();
+      await expect(service.approveReturn(orderId)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('una segunda devolución parcial sobre PARTIALLY_RETURNED tampoco se auto-aplica', async () => {
+      const orderId = await toDelivered();
+      await service.applyReturnPriced({
+        orderId, storeId: 'store-1', full: false, refundAmount: 100000, lines: [],
+      });
+      await service.approveReturn(orderId); // → PARTIALLY_RETURNED
+      expect((await service.getOrderById(orderId)).status).toBe('PARTIALLY_RETURNED');
+
+      events.events = [];
+      await service.applyReturnPriced({
+        orderId, storeId: 'store-1', full: false, refundAmount: 50000, lines: [],
+      });
+      const updated = await service.getOrderById(orderId);
+      expect(updated.status).toBe('RETURN_PENDING_APPROVAL');
+      expect(events.keys()).not.toContain('order.return.confirmed');
+
+      await service.rejectReturn(orderId);
+      expect((await service.getOrderById(orderId)).status).toBe('PARTIALLY_RETURNED');
+    });
   });
 
   it('UC-018: lanza conflicto si la transición fue pisada concurrentemente', async () => {

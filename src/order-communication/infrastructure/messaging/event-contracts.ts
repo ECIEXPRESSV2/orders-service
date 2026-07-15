@@ -78,6 +78,13 @@ export interface OrderCancelledPayload {
    *  se había descontado y products-service debe restituirlo, no solo liberar
    *  una reserva. */
   wasSold: boolean;
+  /**
+   * Política de reembolso para financial-service. Ausente = reembolso del 100% (comportamiento
+   * histórico, para cancelaciones no cubiertas por las reglas nuevas). 'HALF_PRODUCTS_ONLY' =
+   * cancelación del cliente antes de listo-para-retirar (50% de productos, pierde la hora
+   * pico). 'NO_REFUND' = venció el QR (el negocio ya preparó el pedido, se le paga completo).
+   */
+  refundPolicy?: 'HALF_PRODUCTS_ONLY' | 'NO_REFUND';
 }
 
 export interface OrderStatusChangedPayload {
