@@ -516,6 +516,15 @@ export class OrdersService {
     const withEvidence: Order = { ...order, lastReturnReason: dto.reason, lastReturnRefundId: dto.refundId };
     const saved = await this.orderRepository.save(withEvidence);
 
+    // Post-recogida (DELIVERED/PARTIALLY_RETURNED): esta devolución pasará por revisión de la
+    // tienda, y el chat ya se había cerrado para siempre al entregar. Se reabre AQUÍ, de forma
+    // síncrona (no cuando llegue el precio, más adelante), para que el frontend pueda mandar al
+    // comprador directo al chat justo después de este request, sin que la conversación aparezca
+    // cerrada/oculta por una carrera con el pricing asíncrono.
+    if (order.status === 'DELIVERED' || order.status === 'PARTIALLY_RETURNED') {
+      await this.communicationService.reopenConversationForOrder(order.id);
+    }
+
     await this.events.publish(ORDER_EVENTS.RETURN_REQUESTED, {
       orderId: order.id,
       storeId: order.storeId,
@@ -556,6 +565,8 @@ export class OrdersService {
         `Devolución por ${event.refundAmount} centavos pendiente de aprobación`,
       );
       await this.finalize(order.status, updated);
+      // El chat ya se reabrió de forma síncrona en requestReturn (ver ese método); aquí solo
+      // queda armar y publicar la tarjeta de reembolso con lo que acaba de cotizar products.
       const items = event.lines.map((line) => {
         const orderItem = order.items.find((i) => i.productId === line.productId);
         return {

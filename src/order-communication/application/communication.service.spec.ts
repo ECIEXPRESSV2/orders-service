@@ -160,6 +160,22 @@ describe('CommunicationService', () => {
     expect(repo.conv.status).toBe('closed');
   });
 
+  it('reopenConversationForOrder reactiva un chat cerrado (devolución post-recogida)', async () => {
+    await service.closeConversationForOrder('order-1');
+    await service.reopenConversationForOrder('order-1');
+    expect(repo.conv.status).toBe('active');
+  });
+
+  it('reopenConversationForOrder es no-op si el chat no está cerrado', async () => {
+    await service.reopenConversationForOrder('order-1');
+    expect(repo.conv.status).toBe('active');
+  });
+
+  it('reopenConversationForOrder es no-op si el pedido nunca tuvo chat', async () => {
+    repo.hasConversation = false;
+    await expect(service.reopenConversationForOrder('order-1')).resolves.toBeUndefined();
+  });
+
   it('ensureConversationForOrder guarda nombre/logo de tienda y nombre/foto del cliente (best-effort)', async () => {
     repo.hasConversation = false;
     identity = buildIdentity({

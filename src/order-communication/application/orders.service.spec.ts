@@ -99,6 +99,10 @@ class FakeCommunicationService {
     this.refundResolutions.push({ orderId, kind: patch.kind });
     return null;
   }
+  reopenedOrderIds: string[] = [];
+  async reopenConversationForOrder(orderId: string) {
+    this.reopenedOrderIds.push(orderId);
+  }
 }
 
 const buildDto = (overrides: Partial<CreateOrderDto> = {}): CreateOrderDto => ({
@@ -335,6 +339,21 @@ describe('OrdersService', () => {
       await service.markDelivered(created.id);
       return created.id;
     };
+
+    it('requestReturn sobre un pedido DELIVERED reabre el chat de inmediato (no espera a que se cotice)', async () => {
+      const orderId = await toDelivered();
+      expect(communication.closedOrderIds).toContain(orderId); // se cerró al entregar
+      communication.reopenedOrderIds = [];
+      await service.requestReturn(orderId, { full: true, reason: 'Llegó dañado' });
+      expect(communication.reopenedOrderIds).toContain(orderId);
+    });
+
+    it('requestReturn sobre un pedido CONFIRMED (pre-recogida) NO reabre el chat', async () => {
+      const created = await service.createOrder(buildDto({ paymentMethod: 'cash' }));
+      await service.handleStockReservationConfirmed(created.id); // → CONFIRMED
+      await service.requestReturn(created.id, { full: true });
+      expect(communication.reopenedOrderIds).not.toContain(created.id);
+    });
 
     it('applyReturnPriced NO auto-aplica desde DELIVERED: pasa a RETURN_PENDING_APPROVAL', async () => {
       const orderId = await toDelivered();
