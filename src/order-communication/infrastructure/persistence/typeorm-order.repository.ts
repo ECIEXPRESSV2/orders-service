@@ -188,6 +188,8 @@ export class TypeOrmOrderRepository implements OrderRepository {
     entity.pendingReturnAmount = order.pendingReturnAmount ?? null;
     entity.pendingReturnFull = order.pendingReturnFull ?? null;
     entity.pendingReturnFromStatus = order.pendingReturnFromStatus ?? null;
+    entity.lastReturnReason = order.lastReturnReason ?? null;
+    entity.lastReturnRefundId = order.lastReturnRefundId ?? null;
 
     entity.items = order.items.map((item) => {
       const itemEntity = new OrderItemEntity();
@@ -303,6 +305,8 @@ export class TypeOrmOrderRepository implements OrderRepository {
       pendingReturnAmount: entity.pendingReturnAmount ?? undefined,
       pendingReturnFull: entity.pendingReturnFull ?? undefined,
       pendingReturnFromStatus: entity.pendingReturnFromStatus ?? undefined,
+      lastReturnReason: entity.lastReturnReason ?? undefined,
+      lastReturnRefundId: entity.lastReturnRefundId ?? undefined,
     };
   }
 }

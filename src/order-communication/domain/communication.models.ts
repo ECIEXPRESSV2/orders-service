@@ -1,7 +1,36 @@
 export type ConversationStatus = 'active' | 'archived' | 'closed';
 export type ParticipantRole = 'customer' | 'vendor' | 'support' | 'system';
 export type MessageStatus = 'sent' | 'delivered' | 'read' | 'deleted';
-export type MessageType = 'text' | 'system' | 'status-update';
+export type MessageType = 'text' | 'system' | 'status-update' | 'refund';
+
+/** Estado del reembolso representado por un mensaje `messageType: 'refund'` (va en `content`, como JSON). */
+export type RefundMessageKind = 'requested' | 'approved' | 'rejected';
+
+export interface RefundMessageItem {
+  productId: string;
+  name: string;
+  imageUrl?: string;
+  quantity: number;
+  /** Centavos COP. */
+  amount: number;
+}
+
+export interface RefundMessagePayload {
+  orderId: string;
+  /** Centavos COP. */
+  amount: number;
+  full: boolean;
+  kind: RefundMessageKind;
+  /** Motivo del comprador (`kind: 'requested'`) o del vendedor al rechazar (`kind: 'rejected'`). */
+  reason?: string;
+  /** Carpeta de evidencia `<orderId>/refunds/<refundId>/` en el blob `orders`; ausente si no hubo fotos. */
+  refundId?: string;
+  /** Productos incluidos en esta devolución (solo se arma al crear el mensaje, `kind: 'requested'`). */
+  items?: RefundMessageItem[];
+}
+
+/** Remitente sintético para mensajes que emite el sistema (no hay un usuario real detrás). */
+export const SYSTEM_SENDER_ID = '00000000-0000-0000-0000-000000000000';
 
 export const PARTICIPANT_ROLES: ParticipantRole[] = ['customer', 'vendor', 'support', 'system'];
 

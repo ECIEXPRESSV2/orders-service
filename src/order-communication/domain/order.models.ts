@@ -115,6 +115,14 @@ export interface Order {
   pendingReturnAmount?: number;
   pendingReturnFull?: boolean;
   pendingReturnFromStatus?: OrderStatus;
+  /**
+   * Motivo + carpeta de evidencia (fotos) de la ÚLTIMA solicitud de devolución (`requestReturn`).
+   * Sobreviven hasta que `applyReturnPriced` arma el mensaje de chat de la devolución pendiente;
+   * una nueva solicitud los sobreescribe. `lastReturnRefundId` es el nombre de carpeta
+   * `<orderId>/refunds/<refundId>/` en el blob compartido `orders` (vacío si no hubo fotos).
+   */
+  lastReturnReason?: string;
+  lastReturnRefundId?: string;
 }
 
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
