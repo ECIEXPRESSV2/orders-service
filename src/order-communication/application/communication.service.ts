@@ -66,6 +66,19 @@ export class CommunicationService {
   }
 
   /**
+   * Reabre el chat de un pedido que ya se había cerrado al entregarse: una devolución
+   * post-recogida (RETURN_PENDING_APPROVAL) retoma la conversación para que comprador y
+   * tienda puedan ver la tarjeta de reembolso y resolverla. No-op si el pedido nunca tuvo
+   * chat o ya está activo (no se toca 'archived': ese es un toggle personal del usuario).
+   */
+  async reopenConversationForOrder(orderId: string): Promise<void> {
+    const existing = await this.communicationRepository.findConversationByOrderId(orderId);
+    if (!existing || existing.status !== 'closed') return;
+    const conversation = await this.communicationRepository.setConversationStatus(existing.id, 'active');
+    this.publishToParticipants(conversation, 'conversation:updated', this.toConversationResponse(conversation));
+  }
+
+  /**
    * Verifica que `userId` sea parte de la conversación: el cliente del pedido, o staff
    * activo de la tienda (cualquier miembro, no solo el `vendorId` fijado al crearla).
    * Lanza `ForbiddenException` si no aplica ninguno de los dos casos.
