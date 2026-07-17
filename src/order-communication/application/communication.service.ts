@@ -62,7 +62,7 @@ export class CommunicationService {
     const existing = await this.communicationRepository.findConversationByOrderId(orderId);
     if (!existing || existing.status === 'closed') return;
     const conversation = await this.communicationRepository.setConversationStatus(existing.id, 'closed');
-    this.publishToParticipants(conversation, 'conversation:updated', this.toConversationResponse(conversation));
+    await this.publishToParticipants(conversation, 'conversation:updated', this.toConversationResponse(conversation));
   }
 
   /**
@@ -75,7 +75,7 @@ export class CommunicationService {
     const existing = await this.communicationRepository.findConversationByOrderId(orderId);
     if (!existing || existing.status !== 'closed') return;
     const conversation = await this.communicationRepository.setConversationStatus(existing.id, 'active');
-    this.publishToParticipants(conversation, 'conversation:updated', this.toConversationResponse(conversation));
+    await this.publishToParticipants(conversation, 'conversation:updated', this.toConversationResponse(conversation));
   }
 
   /**
@@ -180,7 +180,7 @@ export class CommunicationService {
     // para todos los participantes, estén o no con la conversación abierta.
     const updated = await this.communicationRepository.findConversationById(dto.conversationId);
     if (updated) {
-      this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
+      await this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
     }
 
     // Notifica al otro participante (notifications-service consume este evento).
@@ -235,7 +235,7 @@ export class CommunicationService {
 
     const updated = await this.communicationRepository.findConversationById(conversation.id);
     if (updated) {
-      this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
+      await this.publishToParticipants(updated, 'conversation:updated', this.toConversationResponse(updated));
     }
 
     return responsePayload;
@@ -281,7 +281,7 @@ export class CommunicationService {
     });
     const updatedConversation = await this.communicationRepository.findConversationById(conversation.id);
     if (updatedConversation) {
-      this.publishToParticipants(updatedConversation, 'conversation:updated', this.toConversationResponse(updatedConversation));
+      await this.publishToParticipants(updatedConversation, 'conversation:updated', this.toConversationResponse(updatedConversation));
     }
 
     return responsePayload;
@@ -356,7 +356,7 @@ export class CommunicationService {
     await this.assertParticipant(existing, userId);
     const conversation = await this.communicationRepository.setConversationStatus(conversationId, status);
     const payload = this.toConversationResponse(conversation);
-    this.publishToParticipants(conversation, 'conversation:updated', payload);
+    await this.publishToParticipants(conversation, 'conversation:updated', payload);
     return payload;
   }
 
@@ -417,11 +417,19 @@ export class CommunicationService {
     return messages.map((message) => this.toMessageResponse(message));
   }
 
-  /** Emite un evento a la "sala personal" (`user:<id>`) de cada participante del chat. */
-  private publishToParticipants(conversation: Conversation, type: string, payload: unknown): void {
+  /**
+   * Emite un evento a la "sala personal" (`user:<id>`) de cada participante del chat.
+   * Incluye a TODO el staff activo de la tienda (no solo `conversation.vendorId`, que es
+   * únicamente el primer staff que había cuando se creó la conversación): el control de
+   * acceso (`assertParticipant`) ya deja entrar a cualquier staff, así que el aviso en
+   * tiempo real debe llegarles a todos por igual, no solo a quien la creó.
+   */
+  private async publishToParticipants(conversation: Conversation, type: string, payload: unknown): Promise<void> {
+    const staffIds = await this.identity.getStoreStaffIds(conversation.storeId).catch(() => []);
     const userIds = new Set<string>([
       conversation.customerId,
       conversation.vendorId,
+      ...staffIds,
       ...conversation.participants.map((participant) => participant.userId),
     ]);
     const occurredAt = new Date().toISOString();
