@@ -56,6 +56,7 @@ class FakeEventPublisher implements EventPublisher {
 const buildIdentity = (overrides: Partial<IdentityPort> = {}): IdentityPort => ({
   getStoreAvailability: async () => ({ available: true }),
   getStoreVendorId: async () => null,
+  getStoreStaffIds: async () => [],
   isStoreStaff: async () => false,
   getStoreDisplay: async () => null,
   getUserDisplay: async () => null,
