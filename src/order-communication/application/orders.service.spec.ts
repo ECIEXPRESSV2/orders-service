@@ -55,6 +55,7 @@ class FakeEventPublisher implements EventPublisher {
 const identity: IdentityPort = {
   getStoreAvailability: async () => ({ available: true }),
   getStoreVendorId: async () => null,
+  getStoreStaffIds: async () => [],
   isStoreStaff: async () => true,
   getStoreDisplay: async () => null,
   getUserDisplay: async () => null,
@@ -179,6 +180,7 @@ describe('OrdersService', () => {
       {
         getStoreAvailability: async () => ({ available: false, reason: 'cerrada' }),
         getStoreVendorId: async () => null,
+        getStoreStaffIds: async () => [],
         isStoreStaff: async () => false,
         getStoreDisplay: async () => null,
         getUserDisplay: async () => null,

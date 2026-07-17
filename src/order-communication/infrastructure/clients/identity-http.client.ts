@@ -50,6 +50,21 @@ export class IdentityHttpClient implements IdentityPort {
     }
   }
 
+  async getStoreStaffIds(storeId: string): Promise<string[]> {
+    try {
+      const { data } = await axios.get<Array<{ userId?: string }>>(
+        `${this.baseUrl}/internal/stores/${storeId}/staff`,
+        { timeout: 6000 },
+      );
+      return (data ?? []).map((member) => member.userId).filter((id): id is string => !!id);
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo listar el staff de la tienda ${storeId} en identity: ${(error as Error).message}.`,
+      );
+      return [];
+    }
+  }
+
   async isStoreStaff(storeId: string, userId: string): Promise<boolean> {
     try {
       const { data } = await axios.get<Array<{ userId?: string }>>(

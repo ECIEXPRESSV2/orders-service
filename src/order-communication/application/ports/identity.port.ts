@@ -26,6 +26,13 @@ export interface IdentityPort {
    */
   getStoreVendorId(storeId: string): Promise<string | null>;
   /**
+   * Devuelve los `userId` de TODO el staff activo de la tienda (no solo el primero). Se usa
+   * para notificar en tiempo real (WebSocket) a cualquier miembro del staff, no solo al
+   * `vendorId` fijado al crear la conversación -- igual que `isStoreStaff` ya permite que
+   * cualquiera de ellos acceda al chat, no solo ese primero. `[]` si identity no responde.
+   */
+  getStoreStaffIds(storeId: string): Promise<string[]>;
+  /**
    * Indica si `userId` es staff activo (o dueño) de `storeId`. Base del control de acceso
    * del chat: cualquier miembro del staff de la tienda puede ver/responder sus chats, no
    * solo el `vendorId` fijado al crear la conversación. `false` (no `true`) si identity no
